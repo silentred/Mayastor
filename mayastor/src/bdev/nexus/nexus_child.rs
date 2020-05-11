@@ -228,9 +228,10 @@ impl NexusChild {
         );
 
         let cfg = Config::by_ref();
-        if cfg.err_store_opts.enable_err_store {
-            self.err_store =
-                Some(NexusErrStore::new(cfg.err_store_opts.err_store_size));
+        if cfg.err_monitoring_opts.enable_err_store {
+            self.err_store = Some(NexusErrStore::new(
+                cfg.err_monitoring_opts.err_store_size,
+            ));
         };
 
         self.state = ChildState::Open;
@@ -399,6 +400,10 @@ impl NexusChild {
         }
 
         Err(ChildError::ChildInvalid {})
+    }
+
+    pub fn set_faulted(&mut self) {
+        self.state = ChildState::Faulted
     }
 
     /// write the contents of the buffer to this child

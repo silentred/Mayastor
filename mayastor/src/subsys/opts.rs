@@ -477,23 +477,33 @@ impl GetOpts for IscsiTgtOpts {
 
 #[serde(default, deny_unknown_fields)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ErrStoreOpts {
+pub struct ErrMonitoringOpts {
     /// ring buffer size
     pub err_store_size: usize,
     /// NexusErrStore enabled
     pub enable_err_store: bool,
+    /// whether to carry out this action
+    pub fault_child_on_error: bool,
+    /// if the number of errors for the same IO exceeds this number, take
+    /// action
+    pub max_retry_errors: u32,
+    /// errors older than this are ignored
+    pub max_error_age_ns: u64,
 }
 
-impl Default for ErrStoreOpts {
+impl Default for ErrMonitoringOpts {
     fn default() -> Self {
         Self {
             err_store_size: 256,
-            enable_err_store: true,
+            enable_err_store: false,
+            fault_child_on_error: false,
+            max_retry_errors: 0,
+            max_error_age_ns: 0,
         }
     }
 }
 
-impl GetOpts for ErrStoreOpts {
+impl GetOpts for ErrMonitoringOpts {
     fn get(&self) -> Self {
         self.clone()
     }

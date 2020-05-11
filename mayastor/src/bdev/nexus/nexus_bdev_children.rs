@@ -259,6 +259,26 @@ impl Nexus {
         Ok(self.status())
     }
 
+    /// fault a child device and reconfigure the IO channels
+    pub async fn fault_child(
+        &mut self,
+        name: &str,
+    ) -> Result<NexusState, Error> {
+        trace!("{}: fault child request for {}", self.name, name);
+
+        if let Some(child) = self.children.iter_mut().find(|c| c.name == name) {
+            child.set_faulted();
+        } else {
+            return Err(Error::ChildNotFound {
+                name: self.name.clone(),
+                child: name.to_owned(),
+            });
+        }
+
+        self.reconfigure(DREvent::ChildFault).await;
+        Ok(self.set_state(NexusState::Degraded))
+    }
+
     /// online a child and reconfigure the IO channels. The child is already
     /// registered, but simply not opened. This can be required in case where
     /// a child is misbehaving.
