@@ -7,11 +7,12 @@ pub use nexus::{
         nexus_create,
         nexus_lookup,
         Nexus,
+        NexusState,
         NexusStatus,
         VerboseError,
     },
     nexus_child::ChildStatus,
-    nexus_child_error_store::NexusErrStore,
+    nexus_child_error_store::{NexusErrStore, NexusErrStoreQuery},
     nexus_label::{GPTHeader, GptEntry},
     nexus_metadata_content::{
         NexusConfig,

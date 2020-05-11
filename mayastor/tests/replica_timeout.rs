@@ -32,6 +32,8 @@ static UUID2: &str = "11111111-76b6-4fcf-864d-1027d4038756";
 
 static NXNAME: &str = "replica_timeout_test";
 
+static YAML_CONFIG_FILE: &str = "/tmp/error_fault_child_test_nexus.yaml";
+
 fn generate_config() {
     let uri1 = BDEVNAME1.into();
     let uri2 = BDEVNAME2.into();
@@ -77,9 +79,20 @@ fn replica_stop_cont() {
 
     common::truncate_file(DISKNAME1, DISKSIZE_KB);
 
+    let mut config = Config::default();
+    config.err_monitoring_opts.enable_err_store = true;
+    config.err_monitoring_opts.err_store_size = 256;
+    config.err_monitoring_opts.fault_child_on_error = false; // true;
+    config.err_monitoring_opts.max_error_age_ns = 1_000_000_000_000;
+    config.err_monitoring_opts.max_retry_errors = 0;
+
+    config.write(YAML_CONFIG_FILE).unwrap();
+
+    test_init!(Some(YAML_CONFIG_FILE.to_string()));
+
     let mut ms = start_mayastor(CFGNAME1, 10126);
 
-    test_init!();
+    //test_init!();
 
     Reactor::block_on(async {
         create_nexus(true).await;
@@ -89,7 +102,7 @@ fn replica_stop_cont() {
         let handle = thread::spawn(move || {
             // Sufficiently long to cause a controller reset
             // see NvmeBdevOpts::Defaults::timeout_us
-            thread::sleep(time::Duration::from_secs(3));
+            thread::sleep(time::Duration::from_secs(10));
             ms.sig_cont();
             ms
         });
@@ -127,14 +140,14 @@ fn replica_term() {
         read_some().await.unwrap();
     });
     ms1.sig_term();
-    thread::sleep(time::Duration::from_secs(1));
+    thread::sleep(time::Duration::from_secs(5));
     Reactor::block_on(async {
         read_some()
             .await
             .expect("should read with 1 Nexus child terminated");
     });
     ms2.sig_term();
-    thread::sleep(time::Duration::from_secs(1));
+    thread::sleep(time::Duration::from_secs(5));
     Reactor::block_on(async {
         read_some()
             .await

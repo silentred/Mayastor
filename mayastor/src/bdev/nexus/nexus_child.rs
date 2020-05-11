@@ -1,13 +1,20 @@
+use once_cell::sync::OnceCell;
+
 use std::{convert::TryFrom, fmt::Display, sync::Arc};
 
 use nix::errno::Errno;
 use serde::{export::Formatter, Serialize};
 use snafu::{ResultExt, Snafu};
 
-use spdk_sys::{spdk_bdev_module_release_bdev, spdk_io_channel};
+use spdk_sys::{spdk_bdev_module_release_bdev, spdk_io_channel, spdk_bdev_set_timeout};
 
 use crate::{
-    bdev::NexusErrStore,
+    bdev::{
+        //nexus::nexus_bdev::NEXUS_PRODUCT_ID,
+        NexusErrStore,
+        nexus::nexus_io::io_status,
+        nexus::nexus_bdev::nexus_lookup,
+    },
     core::{Bdev, BdevHandle, CoreError, Descriptor, DmaBuf},
     nexus_uri::{bdev_destroy, BdevCreateDestroy},
     rebuild::{ClientOperations, RebuildJob},
@@ -181,6 +188,36 @@ impl Display for NexusChild {
     }
 }
 
+static NEXUS_NAME: OnceCell<String> = OnceCell::new();
+
+unsafe extern "C" fn timeout_callback(
+    _: *mut nix::libc::c_void,
+    child_io: *mut spdk_sys::spdk_bdev_io
+) {
+    warn!("============ timed out ============");
+
+    let nexus_name_string = NEXUS_NAME.get().expect("not initialized");
+    let nexus_mut_ref = match nexus_lookup(&nexus_name_string) {
+        Some(nexus) => nexus,
+        None => {
+            error!("Failed to find the nexus >{}<", nexus_name_string);
+            return;
+        }
+    };
+
+    info!("%%%%%%%%%%%%%%% nexus name is {:?} %%%%%%%%", nexus_name_string);
+
+    let io_type = (*child_io).type_;
+
+    nexus_mut_ref.error_record_add(
+        (*child_io).bdev,
+        io_type.into(),
+        io_status::FAILED,
+        0, //io offset 
+        0, //io_length
+    );
+}
+
 impl NexusChild {
     /// Open the child in RW mode and claim the device to be ours. If the child
     /// is already opened by someone else (i.e one of the targets) it will
@@ -227,10 +264,26 @@ impl NexusChild {
             BdevHandle::try_from(self.desc.as_ref().unwrap().clone()).unwrap(),
         );
 
+        info!(" ############# setting timeout in nexus {} {:?}", self.parent, self.parent.as_ptr());        
+        
+        NEXUS_NAME.get_or_init(|| {
+            self.parent.clone()
+        });
+
+        unsafe {
+            spdk_bdev_set_timeout(
+                self.get_descriptor().unwrap().as_ptr(), // the spdk_bdev
+                1,                                       // tinmeout in seconds
+                Some(timeout_callback),
+                std::ptr::null_mut(), 
+            );
+        }
+
         let cfg = Config::by_ref();
-        if cfg.err_store_opts.enable_err_store {
-            self.err_store =
-                Some(NexusErrStore::new(cfg.err_store_opts.err_store_size));
+        if cfg.err_monitoring_opts.enable_err_store {
+            self.err_store = Some(NexusErrStore::new(
+                cfg.err_monitoring_opts.err_store_size,
+            ));
         };
 
         self.state = ChildState::Open;

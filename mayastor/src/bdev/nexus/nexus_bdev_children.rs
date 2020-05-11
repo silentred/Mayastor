@@ -39,7 +39,7 @@ use crate::{
                 OpenChild,
             },
             nexus_channel::DREvent,
-            nexus_child::{ChildState, NexusChild},
+            nexus_child::{ChildState, ChildStatus, NexusChild},
             nexus_label::{
                 LabelError,
                 NexusChildLabel,
@@ -257,6 +257,24 @@ impl Nexus {
         self.reconfigure(DREvent::ChildOffline).await;
 
         Ok(self.status())
+    }
+
+    /// fault a child device and reconfigure the IO channels
+    pub async fn fault_child(&mut self, name: &str) -> Result<(), Error> {
+        trace!("{}: fault child request for {}", self.name, name);
+
+        if let Some(child) = self.children.iter_mut().find(|c| c.name == name) {
+            if child.status() != ChildStatus::Faulted {
+                child.fault();
+                self.reconfigure(DREvent::ChildFault).await;
+            }
+            Ok(())
+        } else {
+            Err(Error::ChildNotFound {
+                name: self.name.clone(),
+                child: name.to_owned(),
+            })
+        }
     }
 
     /// online a child and reconfigure the IO channels. The child is already

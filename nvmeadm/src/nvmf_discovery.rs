@@ -3,9 +3,9 @@ use crate::nvme_page::{
     NvmfDiscRspPageEntry,
     NvmfDiscRspPageHdr,
 };
-use std::fmt;
 
 use nix::libc::ioctl as nix_ioctl;
+use std::fmt;
 
 use crate::nvmf_subsystem::{NvmeSubsystems, Subsystem};
 

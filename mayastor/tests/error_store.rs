@@ -1,6 +1,6 @@
 pub mod common;
 
-use mayastor::bdev::NexusErrStore;
+use mayastor::bdev::{NexusErrStore, NexusErrStoreQuery};
 use std::time::{Duration, Instant};
 
 const ALL_FLAGS: u32 = 0xffff_ffff;
@@ -60,11 +60,10 @@ fn nexus_child_error_store_test() {
     errors = do_query(&es, ALL_FLAGS, ALL_FLAGS, start_inst, 15);
     assert_eq!(errors, 0);
 
-    errors = es.query(ALL_FLAGS, ALL_FLAGS, None); // no time specified
+    errors = es.query(ALL_FLAGS, ALL_FLAGS, None, NexusErrStoreQuery::Total); // no time specified
     assert_eq!(errors, 15);
 
     /////////////////////// filter by op ////////////////////////
-
     errors = do_query(&es, NexusErrStore::READ_FLAG, ALL_FLAGS, start_inst, 10);
     assert_eq!(errors, 1);
 
@@ -100,6 +99,20 @@ fn nexus_child_error_store_test() {
 
     errors = do_query(&es, ALL_FLAGS, 0, start_inst, 10);
     assert_eq!(errors, 0);
+
+    /////////////////////// repeated errors ///////////////////////////
+
+    errors =
+        es.query(ALL_FLAGS, ALL_FLAGS, None, NexusErrStoreQuery::MostAttempts); // the 5 reset failures
+    assert_eq!(errors, 5);
+
+    errors = es.query(
+        NexusErrStore::WRITE_FLAG | NexusErrStore::UNMAP_FLAG,
+        ALL_FLAGS,
+        None,
+        NexusErrStoreQuery::MostAttempts,
+    ); // the 3 unmap failures
+    assert_eq!(errors, 3);
 }
 
 fn add_records(
@@ -133,5 +146,6 @@ fn do_query(
         op_flags,
         err_flags,
         Some(start_inst + Duration::from_nanos(when)),
+        NexusErrStoreQuery::Total,
     )
 }

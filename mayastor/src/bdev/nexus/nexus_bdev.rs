@@ -733,7 +733,7 @@ impl Nexus {
             }
             return;
         }
-
+        info!("---- Reading from child {} ----", child);
         let (desc, ch) = channels.ch[child].io_tuple();
 
         let ret = Self::readv_impl(pio, desc, ch);
@@ -793,6 +793,10 @@ impl Nexus {
                     pio as *mut _,
                 )
             })
+
+
+
+            
             .collect::<Vec<_>>();
 
         // if any of the children failed to dispatch
@@ -814,10 +818,13 @@ impl Nexus {
         let mut io = Bio(pio);
         // in case of writes, we want to write to all underlying children
         io.ctx_as_mut_ref().in_flight = channels.ch.len() as i8;
+        let mut n = 0;
         let results = channels
             .ch
             .iter()
             .map(|c| unsafe {
+                info!("---- Writing to child {} ----", n);
+                n = n + 1;
                 let (b, c) = c.io_tuple();
                 spdk_bdev_writev_blocks(
                     b,
