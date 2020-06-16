@@ -5,7 +5,7 @@ use crossbeam::channel::unbounded;
 use std::{ffi::CString, time::Duration};
 pub mod common;
 use mayastor::{
-    bdev::{nexus_create, nexus_lookup, NexusState},
+    bdev::{nexus_create, nexus_lookup, NexusStatus},
     core::{
         mayastor_env_stop,
         Bdev,
@@ -60,7 +60,7 @@ fn nexus_fault_child_test() {
         create_error_bdev().await;
         create_nexus().await;
 
-        check_nexus_state_is(NexusState::Online);
+        check_nexus_state_is(NexusStatus::Online);
 
         inject_error(SPDK_BDEV_IO_TYPE_READ, VBDEV_IO_FAILURE, 10).await;
         inject_error(SPDK_BDEV_IO_TYPE_WRITE, VBDEV_IO_FAILURE, 10).await;
@@ -79,7 +79,7 @@ fn nexus_fault_child_test() {
 
     reactor_run_millis(1); // error child should be removed from the IO path here
 
-    check_nexus_state_is(NexusState::Degraded);
+    check_nexus_state_is(NexusStatus::Degraded);
 
     Reactor::block_on(async {
         err_read_nexus_both(true).await; // should succeed because both IOs go to the remaining child
@@ -94,9 +94,9 @@ fn nexus_fault_child_test() {
     common::delete_file(&[YAML_CONFIG_FILE.to_string()]);
 }
 
-fn check_nexus_state_is(expected_state: NexusState) {
+fn check_nexus_state_is(expected_status: NexusStatus) {
     let nexus = nexus_lookup(ERROR_COUNT_TEST_NEXUS).unwrap();
-    assert_eq!(nexus.status(), expected_state);
+    assert_eq!(nexus.status(), expected_status);
 }
 
 async fn create_error_bdev() {

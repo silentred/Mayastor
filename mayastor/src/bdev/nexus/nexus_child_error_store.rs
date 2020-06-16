@@ -277,13 +277,12 @@ impl Nexus {
                     io_offset,
                     io_num_blocks,
                     now,
-                )
-                .await;
+                );
             });
         }
     }
 
-    async fn future_error_record_add(
+    fn future_error_record_add(
         name: String,
         bdev: *const spdk_bdev,
         io_op_type: spdk_bdev_io_type,
@@ -322,7 +321,7 @@ impl Nexus {
                             "============= Faulting child {} ==============",
                             child_name
                         );
-                        if nexus.fault_child(&child_name).await.is_err() {
+                        if nexus.fault_child(&child_name).is_err() {
                             error!("Failed to fault the child {}", child_name);
                         }
                     }

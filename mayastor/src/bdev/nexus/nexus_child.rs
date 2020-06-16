@@ -401,11 +401,11 @@ impl NexusChild {
 
         Err(ChildError::ChildInvalid {})
     }
-
-    pub fn set_faulted(&mut self) {
-        self.state = ChildState::Faulted
-    }
-
+    /***************
+        pub fn set_faulted(&mut self) {
+            self.state = ChildStatus::Faulted
+        }
+    ********************/
     /// write the contents of the buffer to this child
     pub async fn write_at(
         &self,
