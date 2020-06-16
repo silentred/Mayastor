@@ -318,6 +318,10 @@ impl Nexus {
                         )
                     {
                         let child_name = child.name.clone();
+                        info!(
+                            "============= Faulting child {} ==============",
+                            child_name
+                        );
                         if nexus.fault_child(&child_name).await.is_err() {
                             error!("Failed to fault the child {}", child_name);
                         }
@@ -385,7 +389,7 @@ impl Nexus {
             Instant::now().checked_sub(Duration::from_nanos(max_error_age_ns));
 
         child.err_store.as_ref().unwrap().query(
-            NexusErrStore::ALL_IO_FLAGS,
+            NexusErrStore::READ_FLAG | NexusErrStore::WRITE_FLAG,
             NexusErrStore::IO_FAILED_FLAG,
             earliest_time, // can be None
             NexusErrStoreQuery::MostAttempts,
