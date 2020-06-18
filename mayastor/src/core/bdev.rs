@@ -210,7 +210,7 @@ impl Bdev {
         unsafe { spdk_bdev_io_type_supported(self.0, io_type) }
     }
 
-    /// returns the bdev als a ptr
+    /// returns the bdev as a ptr
     pub fn as_ptr(&self) -> *mut spdk_bdev {
         self.0
     }

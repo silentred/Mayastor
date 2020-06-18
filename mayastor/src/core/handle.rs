@@ -19,6 +19,7 @@ use spdk_sys::{
     spdk_bdev_write,
     spdk_io_channel,
 };
+use std::{thread, time};
 
 use crate::{
     core::{Bdev, CoreError, Descriptor, DmaBuf, DmaError, IoChannel},
@@ -31,6 +32,8 @@ use crate::{
 pub struct BdevHandle {
     pub desc: ManuallyDrop<Arc<Descriptor>>,
     pub channel: ManuallyDrop<IoChannel>,
+    num_retries: u32,
+    retry_wait_ms: u64,
 }
 
 impl BdevHandle {
@@ -95,9 +98,46 @@ impl BdevHandle {
         sender.send(success).expect("io completion error");
     }
 
+    /// set number of retries for IO
+    pub fn set_retries(&mut self, retries: u32) {
+        self.num_retries = match retries {
+            0 => 1,
+            _ => retries,
+        };
+    }
+
+    /// set wait interval in ms between IO retries
+    pub fn set_retry_wait_ms(&mut self, retry_wait_ms: u64) {
+        self.retry_wait_ms = retry_wait_ms;
+    }
+
     /// write the ['DmaBuf'] to the given offset. This function is implemented
     /// using a ['Future'] and is not intended for non-internal IO.
     pub async fn write_at(
+        &self,
+        offset: u64,
+        buffer: &DmaBuf,
+    ) -> Result<usize, CoreError> {
+        for i in 1 ..= self.num_retries {
+            let res = self.write_at_int(offset, buffer).await;
+            match res {
+                Ok(_) => {
+                    return res;
+                }
+                Err(e) => {
+                    thread::sleep(time::Duration::from_millis(
+                        self.retry_wait_ms,
+                    ));
+                    if i == self.num_retries {
+                        return Err(e);
+                    }
+                }
+            };
+        }
+        Ok(0)
+    }
+
+    async fn write_at_int(
         &self,
         offset: u64,
         buffer: &DmaBuf,
@@ -135,6 +175,30 @@ impl BdevHandle {
 
     /// read at given offset into the ['DmaBuf']
     pub async fn read_at(
+        &self,
+        offset: u64,
+        buffer: &mut DmaBuf,
+    ) -> Result<usize, CoreError> {
+        for i in 1 ..= self.num_retries {
+            let res = self.read_at_int(offset, buffer).await;
+            match res {
+                Ok(_) => {
+                    return res;
+                }
+                Err(e) => {
+                    thread::sleep(time::Duration::from_millis(
+                        self.retry_wait_ms,
+                    ));
+                    if i == self.num_retries {
+                        return Err(e);
+                    }
+                }
+            };
+        }
+        Ok(0)
+    }
+
+    async fn read_at_int(
         &self,
         offset: u64,
         buffer: &mut DmaBuf,
@@ -221,6 +285,8 @@ impl TryFrom<Descriptor> for BdevHandle {
             return Ok(Self {
                 desc: ManuallyDrop::new(Arc::new(desc)),
                 channel: ManuallyDrop::new(channel),
+                num_retries: 1,
+                retry_wait_ms: 100,
             });
         }
 
@@ -238,6 +304,8 @@ impl TryFrom<Arc<Descriptor>> for BdevHandle {
             return Ok(Self {
                 desc: ManuallyDrop::new(desc),
                 channel: ManuallyDrop::new(channel),
+                num_retries: 1,
+                retry_wait_ms: 100,
             });
         }
 
