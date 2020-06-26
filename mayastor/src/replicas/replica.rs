@@ -28,6 +28,7 @@ use rpc::mayastor::{
 use spdk_sys::{
     spdk_lvol,
     vbdev_lvol_create,
+    vbdev_lvol_create_snapshot,
     vbdev_lvol_destroy,
     vbdev_lvol_get_from_bdev,
     LVOL_CLEAR_WITH_UNMAP,
@@ -100,6 +101,8 @@ pub enum Error {
     CreateLvol { source: Errno },
     #[snafu(display("Failed to destroy lvol"))]
     DestroyLvol { source: Errno },
+    #[snafu(display("Failed to create snapshot on lvol"))]
+    CreateSnapshotLvol { source: Errno },
     #[snafu(display("Replica has been already shared"))]
     ReplicaShared {},
     #[snafu(display("share nvmf"))]
@@ -170,6 +173,9 @@ impl From<Error> for tonic::Status {
                 ..
             } => Self::invalid_argument(e.to_string()),
             Error::DestroyLvol {
+                ..
+            } => Self::internal(e.to_string()),
+            Error::CreateSnapshotLvol {
                 ..
             } => Self::internal(e.to_string()),
             Error::ReplicaShared {
@@ -333,6 +339,27 @@ impl Replica {
             .context(DestroyLvol {})?;
 
         info!("Destroyed replica {}", uuid);
+        Ok(())
+    }
+
+    /// Create a snapshot
+    pub async fn create_snapshot(self, snapshot_name: &str) -> Result<()> {
+        let c_snapshot_name = CString::new(snapshot_name).unwrap();
+        let (sender, receiver) = oneshot::channel::<ErrnoResult<()>>();
+        unsafe {
+            vbdev_lvol_create_snapshot(
+                self.as_ptr(),
+                c_snapshot_name.as_ptr(),
+                Some(Self::replica_done_cb),
+                cb_arg(sender),
+            )
+        };
+        receiver
+            .await
+            .expect("Cancellation is not supported")
+            .context(CreateSnapshotLvol {})?;
+
+        info!("Created snapshot {}", snapshot_name);
         Ok(())
     }
 
