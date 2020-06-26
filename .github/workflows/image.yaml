@@ -4,8 +4,8 @@ on:
     paths-ignore:
       - 'doc/**'
   push:
-    branches:
-      - develop
+    #    branches:
+    #  - develop
 jobs:
   MOAC:
     name: Build MOAC image
@@ -36,7 +36,7 @@ jobs:
         with:
           name: mayastor
           skipNixBuild: true
-      - run: nix-build -A mayastorCSIImage -o /tmp/mayastorCSIImage
+      - run: nix-build -A images.csi -o /tmp/mayastorCSIImage
       - uses: actions/upload-artifact@v2
         with:
           name: mayastor-csi-image
@@ -55,7 +55,7 @@ jobs:
         with:
           name: mayastor
           skipNixBuild: true
-      - run: nix-build -A mayastorImage -o /tmp/mayastorImage
+      - run: nix-build -A images.mayastor-image -o /tmp/mayastorImage
       - uses: actions/upload-artifact@v2
         with:
           name: mayastor-image

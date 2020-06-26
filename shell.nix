@@ -11,6 +11,7 @@ in
 with pkgs;
 let
   moth = "You have requested environment without SPDK, you should provide it!";
+  channel = import ./nix/lib/rust.nix { inherit sources; };
 in
 mkShell {
 
@@ -18,10 +19,10 @@ mkShell {
   hardeningDisable = [ "fortify" ];
   buildInputs = [
     #    nats-server
-    bash
-    channel.stable.rust
+    channel.nightly.rust
     clang
     cowsay
+    e2fsprogs
     fio
     gdb
     gptfdisk
@@ -35,8 +36,10 @@ mkShell {
     openssl
     pkg-config
     pre-commit
+    procps
     python3
     utillinux
+    xfsprogs
   ] ++ pkgs.lib.optionals (nospdk) libspdk.buildInputs
   ++ pkgs.lib.optional (!nospdk) libspdk;
   LIBCLANG_PATH = mayastor.LIBCLANG_PATH;
