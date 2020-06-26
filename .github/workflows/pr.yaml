@@ -6,6 +6,8 @@ jobs:
   Clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    container:
+      image: docker.io/nixos/nix
     steps:
       - uses: actions/checkout@master
       - uses: cachix/install-nix-action@v10

@@ -32,6 +32,7 @@ mkShell {
     libudev
     llvmPackages.libclang
     nodejs-12_x
+    numactl
     nvme-cli
     openssl
     pkg-config
