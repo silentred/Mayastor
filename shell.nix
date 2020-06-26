@@ -37,6 +37,7 @@ mkShell {
     openssl
     pkg-config
     pre-commit
+    procps
     python3
     utillinux
     xfsprogs
