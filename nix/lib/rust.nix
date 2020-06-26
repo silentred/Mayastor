@@ -5,6 +5,7 @@ in
 rec {
   nightly = pkgs.rustChannelOf {
     channel = "nightly";
+    data = "2020-06-26";
   };
 
   stable = pkgs.rustChannelOf {

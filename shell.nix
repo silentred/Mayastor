@@ -20,7 +20,7 @@ mkShell {
   buildInputs = [
     #    nats-server
     bash
-    channel.stable.rust
+    channel.nightly.rust
     clang
     cowsay
     e2fsprogs
