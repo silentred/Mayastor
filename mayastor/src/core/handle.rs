@@ -19,7 +19,6 @@ use spdk_sys::{
     spdk_bdev_write,
     spdk_io_channel,
 };
-use std::{thread, time};
 
 use crate::{
     core::{Bdev, CoreError, Descriptor, DmaBuf, DmaError, IoChannel},
@@ -125,9 +124,6 @@ impl BdevHandle {
                     return res;
                 }
                 Err(e) => {
-                    thread::sleep(time::Duration::from_millis(
-                        self.retry_wait_ms,
-                    ));
                     if i == self.num_retries {
                         return Err(e);
                     }
@@ -186,9 +182,6 @@ impl BdevHandle {
                     return res;
                 }
                 Err(e) => {
-                    thread::sleep(time::Duration::from_millis(
-                        self.retry_wait_ms,
-                    ));
                     if i == self.num_retries {
                         return Err(e);
                     }
