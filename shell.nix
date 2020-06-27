@@ -19,6 +19,7 @@ mkShell {
   hardeningDisable = [ "fortify" ];
   buildInputs = [
     #    nats-server
+    cachix
     channel.nightly.rust
     clang
     cowsay
