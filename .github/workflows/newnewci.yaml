@@ -39,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - uses: cachix/install-nix-action@v10
-      - run: apt install nvme-cli
+      - run: sudo apt-get install nvme-cli -y
       - run: sudo modprobe nbd
       - run: sudo modprobe xfs
       - run: sudo modprobe nvme_tcp
