@@ -34,7 +34,6 @@ jobs:
       - run: cd csi/moac && npm install && npm run prepare && npm run compile
       - run: cd csi/moac && npm test
   Test_mayastor_with_mocha:
-    needs: Build_and_run_cargo
     name: Run mocha tests
     runs-on: ubuntu-latest
     steps:
