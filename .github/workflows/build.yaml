@@ -3,8 +3,8 @@ on:
   pull_request:
     paths-ignore:
   push:
-    branches:
-      - develop
+    #    branches:
+    #  - develop
 jobs:
   nix-shell:
     name: Build and run cargo tests
