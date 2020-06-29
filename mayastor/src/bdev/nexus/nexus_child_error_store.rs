@@ -1,25 +1,25 @@
-use spdk_sys::{spdk_bdev, spdk_bdev_io_type};
 use std::{
     fmt::{Debug, Display},
     time::{Duration, Instant},
 };
 
-use crate::subsys::Config;
-
-use crate::bdev::nexus::nexus_io::{io_status, io_type};
-
-use crate::core::{Cores, Reactors};
-
-use crate::bdev::nexus::{
-    nexus_bdev,
-    nexus_bdev::{
-        nexus_lookup,
-        Error::{ChildMissing, ChildMissingErrStore},
-        Nexus,
-    },
-};
-
 use serde::export::{fmt::Error, Formatter};
+
+use spdk_sys::{spdk_bdev, spdk_bdev_io_type};
+
+use crate::{
+    bdev::nexus::{
+        nexus_bdev,
+        nexus_bdev::{
+            nexus_lookup,
+            Error::{ChildMissing, ChildMissingErrStore},
+            Nexus,
+        },
+        nexus_io::{io_status, io_type},
+    },
+    core::{Cores, Reactors},
+    subsys::Config,
+};
 
 #[derive(Copy, Clone)]
 pub struct NexusChildErrorRecord {

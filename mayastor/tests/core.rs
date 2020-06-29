@@ -11,8 +11,8 @@ use mayastor::{
     nexus_uri::{bdev_create, bdev_destroy},
 };
 use rpc::mayastor::ShareProtocolNexus;
-use std::sync::Once;
 use uuid::Uuid;
+use std::sync::Once;
 
 static DISKNAME1: &str = "/tmp/disk1.img";
 static BDEVNAME1: &str = "aio:///tmp/disk1.img?blk_size=512";
@@ -76,7 +76,6 @@ async fn works() {
     let channel = desc.get_channel().expect("failed to get IO channel");
     drop(channel);
     drop(desc);
-
     let n = nexus_lookup("core_nexus").expect("nexus not found");
     n.destroy().await.unwrap();
 }

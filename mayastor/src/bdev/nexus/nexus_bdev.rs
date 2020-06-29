@@ -4,8 +4,6 @@
 //! optimized for the perceived intent. For example, depending on
 //! application needs synchronous mirroring may be required.
 
-use crate::nexus_uri::bdev_destroy;
-
 use std::{
     fmt,
     fmt::{Display, Formatter},
@@ -19,7 +17,6 @@ use snafu::{ResultExt, Snafu};
 use spdk_sys::{
     spdk_bdev,
     spdk_bdev_desc,
-    spdk_bdev_flush_blocks,
     spdk_bdev_io,
     spdk_bdev_io_get_buf,
     spdk_bdev_readv_blocks,
@@ -52,7 +49,7 @@ use crate::{
     core::{Bdev, DmaError},
     ffihelper::errno_result_from_i32,
     jsonrpc::{Code, RpcErrorCode},
-    nexus_uri::NexusBdevError,
+    nexus_uri::{bdev_destroy, NexusBdevError},
     rebuild::RebuildError,
 };
 
@@ -819,10 +816,10 @@ impl Nexus {
             .ch
             .iter()
             .map(|c| unsafe {
-                let (bdev, chan) = c.io_tuple();
+                let (b, c) = c.io_tuple();
                 spdk_bdev_writev_blocks(
-                    bdev,
-                    chan,
+                    b,
+                    c,
                     io.iovs(),
                     io.iov_count(),
                     io.offset() + io.nexus_as_ref().data_ent_offset,
@@ -854,42 +851,10 @@ impl Nexus {
             .ch
             .iter()
             .map(|c| unsafe {
-                let (bdev, chan) = c.io_tuple();
+                let (b, c) = c.io_tuple();
                 spdk_bdev_unmap_blocks(
-                    bdev,
-                    chan,
-                    io.offset() + io.nexus_as_ref().data_ent_offset,
-                    io.num_blocks(),
-                    Some(Self::io_completion),
-                    pio as *mut _,
-                )
-            })
-            .collect::<Vec<_>>();
-
-        if results.iter().any(|r| *r != 0) {
-            error!(
-                "{}: Failed to submit dispatched IO {:?}",
-                io.nexus_as_ref().name,
-                pio
-            );
-        }
-    }
-
-    pub(crate) fn flush(
-        &self,
-        pio: *mut spdk_bdev_io,
-        channels: &NexusChannelInner,
-    ) {
-        let mut io = Bio(pio);
-        io.ctx_as_mut_ref().in_flight = channels.ch.len() as i8;
-        let results = channels
-            .ch
-            .iter()
-            .map(|c| unsafe {
-                let (bdev, chan) = c.io_tuple();
-                spdk_bdev_flush_blocks(
-                    bdev,
-                    chan,
+                    b,
+                    c,
                     io.offset() + io.nexus_as_ref().data_ent_offset,
                     io.num_blocks(),
                     Some(Self::io_completion),
@@ -974,12 +939,14 @@ pub fn name_to_uuid(name: &str) -> &str {
 /// bring the nexus online, there still might be a configuration mismatch that
 /// would prevent the nexus to come online. We can only determine this
 /// (currently) when online, so we check the errors twice for now.
+#[tracing::instrument(level = "debug")]
 pub async fn nexus_create(
     name: &str,
     size: u64,
     uuid: Option<&str>,
     children: &[String],
 ) -> Result<(), Error> {
+    // global variable defined in the nexus module
     // global variable defined in the nexus module
     let nexus_list = instances();
     if nexus_list.iter().any(|n| n.name == name) {

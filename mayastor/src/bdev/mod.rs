@@ -18,7 +18,6 @@ pub use nexus::{
         NexusConfigVersion3,
     },
 };
-
 pub trait BdevCreateDestroy: CreateDestroy + GetName {}
 
 impl<T: CreateDestroy + GetName> BdevCreateDestroy for T {}

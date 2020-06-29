@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use mayastor::core::Mthread;
 use nix::{
     sys::wait::{waitpid, WaitPidFlag},
     unistd::{gettid, Pid},
@@ -67,6 +68,7 @@ impl MayastorProcess {
 
         let (tx, rx) = std::sync::mpsc::channel::<MayastorProcess>();
         thread::spawn(move || {
+            Mthread::unaffinitize();
             if let Err(e) = fs::create_dir(hugetlbfs_path()) {
                 panic!("failed to create hugetlbfs mount path {}", e);
             }
