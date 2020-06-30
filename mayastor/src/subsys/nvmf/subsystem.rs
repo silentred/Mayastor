@@ -67,7 +67,7 @@ impl IntoIterator for NvmfSubsystem {
     fn into_iter(self) -> Self::IntoIter {
         NVMF_TGT.with(|t| {
             NvmfSubsystemIterator(unsafe {
-                spdk_nvmf_subsystem_get_first(t.borrow().tgt_as_ptr())
+                spdk_nvmf_subsystem_get_first(t.borrow().tgt.as_ptr())
             })
         })
     }
@@ -105,7 +105,7 @@ impl NvmfSubsystem {
         let nqn = gen_nqn(uuid).into_cstring();
         let ss = NVMF_TGT
             .with(|t| {
-                let tgt = t.borrow().tgt_as_ptr();
+                let tgt = t.borrow().tgt.as_ptr();
                 unsafe {
                     spdk_nvmf_subsystem_create(
                         tgt,
@@ -398,7 +398,7 @@ impl NvmfSubsystem {
     pub fn first() -> Option<NvmfSubsystem> {
         NVMF_TGT.with(|t| {
             let ss = unsafe {
-                spdk_nvmf_subsystem_get_first(t.borrow().tgt_as_ptr())
+                spdk_nvmf_subsystem_get_first(t.borrow().tgt.as_ptr())
             };
 
             if ss.is_null() {

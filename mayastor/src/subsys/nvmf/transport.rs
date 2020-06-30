@@ -50,7 +50,7 @@ pub async fn add_tcp_transport() -> Result<(), Error> {
     unsafe {
         NVMF_TGT.with(|t| {
             spdk_nvmf_tgt_add_transport(
-                t.borrow().tgt_as_ptr(),
+                t.borrow().tgt.as_ptr(),
                 transport,
                 Some(done_errno_cb),
                 cb_arg(sender),

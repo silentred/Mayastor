@@ -39,15 +39,19 @@ use spdk_sys::{
     spdk_subsystem_fini_next,
     spdk_subsystem_init_next,
 };
-use tracing::instrument;
+use std::ptr::NonNull;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Debug)]
 pub struct Target {
-    tgt: *mut spdk_nvmf_tgt,
-    accepter_poller: *mut spdk_poller,
+    /// the raw pointer to  our target
+    pub(crate) tgt: NonNull<spdk_nvmf_tgt>,
+    /// poller used to accept new connections on
+    acceptor_poller: NonNull<spdk_poller>,
+    /// the number of poll groups created for this target
     poll_group_count: u16,
+    /// The current state of the target
     next_state: TargetState,
 }
 
@@ -74,11 +78,14 @@ pub(crate) enum TargetState {
 }
 
 impl Target {
+    /// we create a target by going through different stages. Its loosely
+    /// modeled as the native target so that we can "creep in" changes as
+    /// the API is not stable.
     pub fn new() -> Self {
         assert_eq!(Cores::current(), Cores::first());
         Self {
-            tgt: std::ptr::null_mut(),
-            accepter_poller: std::ptr::null_mut(),
+            tgt: NonNull::dangling(),
+            acceptor_poller: NonNull::dangling(),
             poll_group_count: 0,
             next_state: TargetState::Init,
         }
@@ -89,17 +96,18 @@ impl Target {
         let tgt_ptr: Box<spdk_nvmf_target_opts> =
             cfg.nvmf_tcp_tgt_conf.clone().into();
 
-        self.tgt =
+        let tgt =
             unsafe { spdk_nvmf_tgt_create(&*tgt_ptr as *const _ as *mut _) };
-        if self.tgt.is_null() {
+        if tgt.is_null() {
             return Err(Error::CreateTarget {
                 msg: "tgt pointer is None".to_string(),
             });
         }
+        self.tgt = NonNull::new(tgt).unwrap();
         self.next_state();
         Ok(())
     }
-    #[instrument(level = "debug")]
+
     pub fn next_state(&mut self) {
         match self.next_state {
             TargetState::Init => {
@@ -116,15 +124,7 @@ impl Target {
             }
             TargetState::AddTransport => {
                 self.next_state = TargetState::AddListener;
-                Reactors::master().send_future(async {
-                    let result = transport::add_tcp_transport().await;
-                    NVMF_TGT.with(|t| {
-                        if result.is_err() {
-                            t.borrow_mut().next_state = TargetState::Invalid;
-                        }
-                        t.borrow_mut().next_state();
-                    });
-                });
+                self.add_transport();
             }
             TargetState::AddListener => {
                 self.next_state = TargetState::Running;
@@ -159,15 +159,28 @@ impl Target {
         };
     }
 
+    fn add_transport(&self) {
+        Reactors::master().send_future(async {
+            let result = transport::add_tcp_transport().await;
+            NVMF_TGT.with(|t| {
+                if result.is_err() {
+                    t.borrow_mut().next_state = TargetState::Invalid;
+                }
+                t.borrow_mut().next_state();
+            });
+        })
+    }
+
     pub fn init_acceptor(&mut self) {
-        self.accepter_poller = unsafe {
+        self.acceptor_poller = NonNull::new(unsafe {
             spdk_poller_register_named(
                 Some(Self::acceptor_poll),
-                self.tgt as *mut _,
+                self.tgt.as_ptr() as *mut _,
                 10000,
                 "mayastor_nvmf_tgt_poller\0" as *const _ as *mut _,
             )
-        };
+        })
+        .unwrap();
 
         self.next_state();
     }
@@ -177,7 +190,7 @@ impl Target {
                 format!("mayastor_nvmf_tcp_pg_core_{}", r.core()),
                 r.core(),
             ) {
-                r.send_future(Self::create_poll_group(self.tgt, t));
+                r.send_future(Self::create_poll_group(self.tgt.as_ptr(), t));
             }
         });
     }
@@ -274,7 +287,9 @@ impl Target {
     pub fn listen(&mut self) -> Result<()> {
         let cfg = Config::get();
         let trid_nexus = TransportID::new(cfg.nexus_opts.nvmf_nexus_port);
-        let rc = unsafe { spdk_nvmf_tgt_listen(self.tgt, trid_nexus.as_ptr()) };
+        let rc = unsafe {
+            spdk_nvmf_tgt_listen(self.tgt.as_ptr(), trid_nexus.as_ptr())
+        };
 
         if rc != 0 {
             return Err(Error::CreateTarget {
@@ -283,8 +298,9 @@ impl Target {
         }
 
         let trid_replica = TransportID::new(cfg.nexus_opts.nvmf_replica_port);
-        let rc =
-            unsafe { spdk_nvmf_tgt_listen(self.tgt, trid_replica.as_ptr()) };
+        let rc = unsafe {
+            spdk_nvmf_tgt_listen(self.tgt.as_ptr(), trid_replica.as_ptr())
+        };
 
         if rc != 0 {
             return Err(Error::CreateTarget {
@@ -357,24 +373,28 @@ impl Target {
             }
         }
 
-        unsafe { spdk_poller_unregister(&mut self.accepter_poller) };
+        unsafe { spdk_poller_unregister(&mut self.acceptor_poller.as_ptr()) };
 
         let cfg = Config::get();
         let trid_nexus = TransportID::new(cfg.nexus_opts.nvmf_nexus_port);
         let trid_replica = TransportID::new(cfg.nexus_opts.nvmf_replica_port);
 
-        unsafe { spdk_nvmf_tgt_stop_listen(self.tgt, trid_replica.as_ptr()) };
-        unsafe { spdk_nvmf_tgt_stop_listen(self.tgt, trid_nexus.as_ptr()) };
+        unsafe {
+            spdk_nvmf_tgt_stop_listen(self.tgt.as_ptr(), trid_replica.as_ptr())
+        };
+        unsafe {
+            spdk_nvmf_tgt_stop_listen(self.tgt.as_ptr(), trid_nexus.as_ptr())
+        };
 
         unsafe {
             spdk_nvmf_tgt_destroy(
-                self.tgt,
+                self.tgt.as_ptr(),
                 Some(destroy_cb),
                 std::ptr::null_mut(),
             )
         }
     }
-    #[instrument(level = "debug")]
+
     pub fn start_shutdown(&mut self) {
         self.next_state = TargetState::ShutdownSubsystems;
         Reactors::master().send_future(async {
@@ -384,7 +404,7 @@ impl Target {
         });
     }
 
-    pub fn tgt_as_ptr(&self) -> *mut spdk_nvmf_tgt {
-        self.tgt
-    }
+    // pub fn tgt_as_ptr(&self) -> *mut spdk_nvmf_tgt {
+    //     self.tgt
+    // }
 }
