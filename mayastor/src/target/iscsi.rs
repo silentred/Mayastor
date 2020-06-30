@@ -109,7 +109,7 @@ pub fn target_name(bdev_name: &str) -> String {
 /// Create iscsi portal and initiator group which will be used later when
 /// creating iscsi targets.
 pub fn init(address: &str) -> Result<()> {
-    let config = Config::by_ref();
+    let config = Config::get();
     let nexus_port = config.nexus_opts.iscsi_nexus_port;
     let replica_port = config.nexus_opts.iscsi_replica_port;
 

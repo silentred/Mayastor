@@ -36,6 +36,14 @@ fn nvmf_target() {
             });
 
             Reactor::block_on(async {
+                let bdev = Bdev::lookup_by_name(BDEVNAME1).unwrap();
+
+                let should_err = NvmfSubsystem::try_from(&bdev);
+                dbg!(&should_err);
+                assert_eq!(should_err.is_err(), true);
+            });
+
+            Reactor::block_on(async {
                 NvmfSubsystem::first()
                     .into_iter()
                     .for_each(|s| info!("{:?}", s));

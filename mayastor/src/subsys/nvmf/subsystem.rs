@@ -5,17 +5,17 @@ use std::{
     ptr,
 };
 
-use futures::channel::oneshot;
-use serde::export::{Formatter, TryFrom};
-
 use crate::{
     core::{Bdev, Reactors},
-    ffihelper::{cb_arg, AsStr, IntoCString},
+    ffihelper::{cb_arg, AsStr, FfiResult, IntoCString},
     subsys::{
         nvmf::{transport::TransportID, Error, NVMF_TGT},
         Config,
     },
 };
+use futures::channel::oneshot;
+use nix::errno::Errno;
+use serde::export::{Formatter, TryFrom};
 use spdk_sys::{
     spdk_bdev_nvme_opts,
     spdk_nvmf_ns_get_bdev,
@@ -41,7 +41,6 @@ use spdk_sys::{
     spdk_nvmf_subsystem_stop,
     SPDK_NVMF_SUBTYPE_NVME,
 };
-use tracing::instrument;
 
 pub struct NvmfSubsystemIterator(*mut spdk_nvmf_subsystem);
 
@@ -57,6 +56,8 @@ impl Iterator for NvmfSubsystemIterator {
         }
     }
 }
+
+/// new type around a nvmf subsystem
 pub struct NvmfSubsystem(*mut spdk_nvmf_subsystem);
 
 impl IntoIterator for NvmfSubsystem {
@@ -99,46 +100,50 @@ impl TryFrom<&Bdev> for NvmfSubsystem {
 }
 
 impl NvmfSubsystem {
-    #[instrument]
+    /// create a new subsystem where the NQN is based on the UUID
     pub fn new(uuid: &str) -> Result<Self, Error> {
         let nqn = gen_nqn(uuid).into_cstring();
-        let ss = NVMF_TGT.with(|t| {
-            let tgt = t.borrow().tgt_as_ptr();
-            unsafe {
-                spdk_nvmf_subsystem_create(
-                    tgt,
-                    nqn.as_ptr(),
-                    SPDK_NVMF_SUBTYPE_NVME,
-                    1,
-                )
-            }
-        });
-
-        if ss.is_null() {
-            Err(Error::Subsystem {
+        let ss = NVMF_TGT
+            .with(|t| {
+                let tgt = t.borrow().tgt_as_ptr();
+                unsafe {
+                    spdk_nvmf_subsystem_create(
+                        tgt,
+                        nqn.as_ptr(),
+                        SPDK_NVMF_SUBTYPE_NVME,
+                        1,
+                    )
+                }
+            })
+            .to_result(|_| Error::Subsystem {
+                source: Errno::EEXIST,
                 nqn: uuid.into(),
                 msg: "ss ptr is null".into(),
-            })
-        } else {
-            let sn = CString::new("33' ~'~._`o##o>").unwrap();
-            if unsafe { spdk_nvmf_subsystem_set_sn(ss, sn.as_ptr()) } != 0 {
-                return Err(Error::Subsystem {
-                    nqn: uuid.into(),
-                    msg: "failed to set serial".into(),
-                });
-            }
-            let mn = CString::new("Mayastor NVMe controller").unwrap();
-            if unsafe { spdk_nvmf_subsystem_set_mn(ss, mn.as_ptr()) } != 0 {
-                return Err(Error::Subsystem {
-                    nqn: uuid.into(),
-                    msg: "failed to set serial".into(),
-                });
-            }
+            })?;
 
-            Ok(Self(ss))
-        }
+        // look closely, its a race car!
+        let sn = CString::new("33' ~'~._`o##o>").unwrap();
+
+        unsafe { spdk_nvmf_subsystem_set_sn(ss.as_ptr(), sn.as_ptr()) }
+            .to_result(|e| Error::Subsystem {
+                source: Errno::from_i32(e),
+                nqn: uuid.into(),
+                msg: "failed to set serial".into(),
+            })?;
+
+        let mn = CString::new("Mayastor NVMe controller").unwrap();
+        unsafe { spdk_nvmf_subsystem_set_mn(ss.as_ptr(), mn.as_ptr()) }
+            .to_result(|e| Error::Subsystem {
+                source: Errno::from_i32(e),
+                nqn: uuid.into(),
+                msg: "failed to set serial".into(),
+            })?;
+
+        Ok(NvmfSubsystem(ss.as_ptr()))
     }
 
+    /// unfortunately, we cannot always use the bdev UUID which is a shame and
+    /// mostly due to testing.
     pub fn new_with_uuid(uuid: &str, bdev: &Bdev) -> Result<Self, Error> {
         let ss = NvmfSubsystem::new(uuid)?;
         ss.allow_any(true);
@@ -146,7 +151,7 @@ impl NvmfSubsystem {
         Ok(ss)
     }
 
-    #[instrument(debug)]
+    /// add the given bdev to this namespace
     pub fn add_namespace(&self, bdev: &Bdev) -> Result<(), Error> {
         let mut opts = spdk_nvmf_ns_opts::default();
         opts.nguid = bdev.uuid().as_bytes();
@@ -159,16 +164,22 @@ impl NvmfSubsystem {
                 ptr::null_mut(),
             )
         };
-        if ns_id == 0 {
+
+        // the first name space should be 1 and we do not (currently) use
+        // more then one namespace
+
+        if ns_id < 1 {
             Err(Error::Namespace {
                 bdev: bdev.clone(),
                 msg: "failed to add namespace ID".to_string(),
             })
         } else {
+            info!("added NS ID {}", ns_id);
             Ok(())
         }
     }
 
+    /// destroy the subsystem
     pub fn destroy(&self) {
         unsafe { spdk_nvmf_subsystem_destroy(self.0) }
     }
@@ -182,16 +193,17 @@ impl NvmfSubsystem {
         unsafe { spdk_nvmf_subsystem_set_allow_any_host(self.0, enable) };
     }
 
-    // we currently allow all listeners so no need ..
-    async fn add_listner(&self) -> Result<(), Error> {
+    // we currently allow all listeners to the subsystem
+    async fn add_listener(&self) -> Result<(), Error> {
         extern "C" fn listen_cb(arg: *mut c_void, status: i32) {
             let s = unsafe { Box::from_raw(arg as *mut oneshot::Sender<i32>) };
             s.send(status).unwrap();
         }
 
-        let cfg = Config::by_ref();
-        // let mut trid_nexus =
-        //     TransportID::new(cfg.nexus_opts.nvmf_nexus_port).unwrap();
+        let cfg = Config::get();
+
+        // dont yet enable both ports, IOW just add one transportID now
+
         let trid_replica = TransportID::new(cfg.nexus_opts.nvmf_replica_port);
 
         let (s, r) = oneshot::channel::<i32>();
@@ -203,23 +215,17 @@ impl NvmfSubsystem {
                 cb_arg(s),
             );
         }
-        r.await.unwrap();
 
-        // let (s, r) = oneshot::channel::<i32>();
-        // unsafe {
-        //     spdk_nvmf_subsystem_add_listener(
-        //         self.0,
-        //         &mut trid_nexus as *mut _,
-        //         Some(listen_cb),
-        //         cb_arg(s),
-        //     );
-        // }
-        //
-        // r.await.unwrap();
-
-        Ok(())
+        r.await.expect("listen a callback gone").to_result(|e| {
+            Error::Transport {
+                source: Errno::from_i32(e),
+                msg: "Failed to add listener".to_string(),
+            }
+        })
     }
-    #[instrument(debug)]
+
+    /// start the subsystem previously created -- note that we destroy it on
+    /// failure
     pub async fn start(self) -> Result<(), Error> {
         extern "C" fn start_cb(
             ss: *mut spdk_nvmf_subsystem,
@@ -227,7 +233,6 @@ impl NvmfSubsystem {
             status: i32,
         ) {
             let s = unsafe { Box::from_raw(arg as *mut oneshot::Sender<i32>) };
-            // tracing::debug!("this is a tracing line");
             let ss = NvmfSubsystem::from(ss);
             if status != 0 {
                 error!(
@@ -240,34 +245,25 @@ impl NvmfSubsystem {
             s.send(status).unwrap();
         }
 
-        self.add_listner().await?;
+        self.add_listener().await?;
 
         let (s, r) = oneshot::channel::<i32>();
 
-        let mut rc = unsafe {
-            spdk_nvmf_subsystem_start(self.0, Some(start_cb), cb_arg(s))
-        };
-
-        if rc != 0 {
-            return Err(Error::Subsystem {
+        unsafe { spdk_nvmf_subsystem_start(self.0, Some(start_cb), cb_arg(s)) }
+            .to_result(|e| Error::Subsystem {
+                source: Errno::from_i32(e),
                 nqn: self.get_nqn(),
                 msg: "out of memory".to_string(),
-            });
-        }
+            })?;
 
-        rc = r.await.unwrap();
-        if rc != 0 {
-            Err(Error::Subsystem {
-                nqn: self.get_nqn(),
-                msg: "failed to start the subsystem".to_string(),
-            })
-        } else {
-            info!("{:?} started", self);
-            Ok(())
-        }
+        r.await.unwrap().to_result(|e| Error::Subsystem {
+            source: Errno::from_i32(e),
+            nqn: self.get_nqn(),
+            msg: "failed to start the subsystem".to_string(),
+        })
     }
 
-    #[instrument(debug)]
+    /// stop the subsystem
     pub async fn stop(&self) -> Result<(), Error> {
         extern "C" fn stop_cb(
             ss: *mut spdk_nvmf_subsystem,
@@ -289,28 +285,22 @@ impl NvmfSubsystem {
 
         let (s, r) = oneshot::channel::<i32>();
         debug!("stopping {:?}", self);
-        let mut rc = unsafe {
-            spdk_nvmf_subsystem_stop(self.0, Some(stop_cb), cb_arg(s))
-        };
+        unsafe { spdk_nvmf_subsystem_stop(self.0, Some(stop_cb), cb_arg(s)) }
+            .to_result(|e| Error::Subsystem {
+            source: Errno::from_i32(e),
+            nqn: self.get_nqn(),
+            msg: "out of memory".to_string(),
+        })?;
 
-        if rc != 0 {
-            return Err(Error::Subsystem {
-                nqn: self.get_nqn(),
-                msg: "out of memory".to_string(),
-            });
-        }
-
-        rc = r.await.unwrap();
-        if rc != 0 {
-            Err(Error::Subsystem {
-                nqn: self.get_nqn(),
-                msg: "failed to stop the subsystem".to_string(),
-            })
-        } else {
-            Ok(())
-        }
+        r.await.unwrap().to_result(|e| Error::Subsystem {
+            source: Errno::from_i32(e),
+            nqn: self.get_nqn(),
+            msg: "failed to stop the subsystem".to_string(),
+        })
     }
 
+    /// we are not making use of pause and resume yet but this will be needed
+    /// when we start to move things around
     #[allow(dead_code)]
     async fn pause(&self) -> Result<(), Error> {
         extern "C" fn pause_cb(
@@ -333,26 +323,18 @@ impl NvmfSubsystem {
 
         let (s, r) = oneshot::channel::<i32>();
 
-        let mut rc = unsafe {
-            spdk_nvmf_subsystem_pause(self.0, Some(pause_cb), cb_arg(s))
-        };
-
-        if rc != 0 {
-            return Err(Error::Subsystem {
+        unsafe { spdk_nvmf_subsystem_pause(self.0, Some(pause_cb), cb_arg(s)) }
+            .to_result(|e| Error::Subsystem {
+                source: Errno::from_i32(e),
                 nqn: self.get_nqn(),
                 msg: "out of memory".to_string(),
-            });
-        }
+            })?;
 
-        rc = r.await.unwrap();
-        if rc != 0 {
-            Err(Error::Subsystem {
-                nqn: self.get_nqn(),
-                msg: "failed to stop the subsystem".to_string(),
-            })
-        } else {
-            Ok(())
-        }
+        r.await.unwrap().to_result(|e| Error::Subsystem {
+            source: Errno::from_i32(e),
+            nqn: self.get_nqn(),
+            msg: "failed to stop the subsystem".to_string(),
+        })
     }
 
     #[allow(dead_code)]
@@ -383,6 +365,7 @@ impl NvmfSubsystem {
 
         if rc != 0 {
             return Err(Error::Subsystem {
+                source: Errno::UnknownErrno,
                 nqn: self.get_nqn(),
                 msg: "out of memory".to_string(),
             });
@@ -391,15 +374,16 @@ impl NvmfSubsystem {
         rc = r.await.unwrap();
         if rc != 0 {
             Err(Error::Subsystem {
+                source: Errno::UnknownErrno,
                 nqn: self.get_nqn(),
-                msg: "failed to stop the subsystem".to_string(),
+                msg: "failed to resume the subsystem".to_string(),
             })
         } else {
             Ok(())
         }
     }
 
-    #[instrument(debug)]
+    /// destroy all subsystems associated with our target
     pub fn destroy_all() {
         Reactors::master().send_future(async {
             NvmfSubsystem::first().iter().for_each(|s| s.destroy());
@@ -410,11 +394,13 @@ impl NvmfSubsystem {
         });
     }
 
+    /// Get the first subsystem within the system
     pub fn first() -> Option<NvmfSubsystem> {
         NVMF_TGT.with(|t| {
             let ss = unsafe {
                 spdk_nvmf_subsystem_get_first(t.borrow().tgt_as_ptr())
             };
+
             if ss.is_null() {
                 None
             } else {
@@ -423,6 +409,7 @@ impl NvmfSubsystem {
         })
     }
 
+    /// lookup a subsystem by its UUID
     pub fn nqn_lookup(uuid: &str) -> Option<NvmfSubsystem> {
         let nqn = gen_nqn(uuid);
         NvmfSubsystem::first()
@@ -430,6 +417,8 @@ impl NvmfSubsystem {
             .find(|s| s.get_nqn() == nqn)
     }
 
+    /// get the bdev associated with this subsystem -- we implicitly assume the
+    /// first namespace
     pub fn bdev(&self) -> Bdev {
         let ns = unsafe { spdk_nvmf_subsystem_get_first_ns(self.0) };
         let b = unsafe { spdk_nvmf_ns_get_bdev(ns) };
@@ -440,33 +429,34 @@ impl NvmfSubsystem {
     }
 
     fn listeners_to_vec(&self) -> Option<Vec<TransportID>> {
-        // fix this mess
         unsafe {
             let mut listener = spdk_nvmf_subsystem_get_first_listener(self.0);
-            if listener.is_null() {
-                None
-            } else {
-                let mut ids = vec![TransportID(
-                    *spdk_nvmf_subsystem_listener_get_trid(listener),
-                )];
 
-                loop {
-                    listener =
-                        spdk_nvmf_subsystem_get_next_listener(self.0, listener);
-                    if !listener.is_null() {
-                        ids.push(TransportID(
-                            *spdk_nvmf_subsystem_listener_get_trid(listener),
-                        ));
-                        continue;
-                    } else {
-                        break;
-                    }
-                }
-                Some(ids)
+            if listener.is_null() {
+                return None;
             }
+
+            let mut ids = vec![TransportID(
+                *spdk_nvmf_subsystem_listener_get_trid(listener),
+            )];
+
+            loop {
+                listener =
+                    spdk_nvmf_subsystem_get_next_listener(self.0, listener);
+                if !listener.is_null() {
+                    ids.push(TransportID(
+                        *spdk_nvmf_subsystem_listener_get_trid(listener),
+                    ));
+                    continue;
+                } else {
+                    break;
+                }
+            }
+            Some(ids)
         }
     }
 
+    /// return the URI's this subsystem is listening on
     pub fn uri_endpoints(&self) -> Option<Vec<String>> {
         if let Some(v) = self.listeners_to_vec() {
             let nqn = self.get_nqn();

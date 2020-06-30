@@ -1,8 +1,13 @@
 //!
-//!  The target can make use of several transports. Using different transports
-//! allows us to  switch between, say, TCP and RDMA.
-//!  To have the target listen, we specify a transport_id which references the
-//! transport
+//! The NVMF target implementation is used to export replicas
+//! but also, if desired a nexus device. A target makes use of
+//! several transports, what transports that exactly is -- is flexible.
+//!
+//! In our case we currently only deal with TCP. We create two transports
+//! one for the frontend (nexus) and one for the backend (replica)
+//!
+//! As connections come on, we randomly schedule them across cores by putting
+//! the qpair in a poll group that is allocated during reactor start.
 use std::cell::RefCell;
 
 use nix::errno::Errno;
@@ -24,6 +29,7 @@ mod subsystem;
 mod target;
 mod transport;
 
+// wrapper around our NVMF subsystem used for registration
 pub struct Nvmf(pub(crate) *mut spdk_subsystem);
 
 impl Default for Nvmf {
@@ -44,10 +50,14 @@ pub enum Error {
     DestroyTarget { source: Errno, endpoint: String },
     #[snafu(display("Failed to create poll groups {}", msg))]
     PgError { msg: String },
-    #[snafu(display("Failded to create transport {}", msg))]
+    #[snafu(display("Failed to create transport {}", msg))]
     Transport { source: Errno, msg: String },
-    #[snafu(display("Failed to create subsystem for {} {}", nqn, msg))]
-    Subsystem { nqn: String, msg: String },
+    #[snafu(display("Failed to create subsystem for {} {} error: {}", source.desc(), nqn, msg))]
+    Subsystem {
+        source: Errno,
+        nqn: String,
+        msg: String,
+    },
     #[snafu(display("Failed to create share for  {} {}", bdev, msg))]
     Share { bdev: Bdev, msg: String },
     #[snafu(display("Failed to add namespace for  {} {}", bdev, msg))]
@@ -60,21 +70,27 @@ thread_local! {
 }
 
 impl Nvmf {
+    /// initialize a new subsystem that handles NVMF (confusing names, cannot
+    /// help it)
     extern "C" fn init() {
         debug!("mayastor nvmf subsystem init");
 
-        if Config::by_ref().nexus_opts.nvmf_enable {
+        // this code only ever gets run on the fist core so we dont
+        // end up running this on other cores.
+
+        if Config::get().nexus_opts.nvmf_enable {
             NVMF_TGT.with(|tgt| {
                 tgt.borrow_mut().next_state();
             });
         } else {
+            debug!("nvmf targe disabled");
             unsafe { spdk_subsystem_init_next(0) }
         }
     }
 
     extern "C" fn fini() {
         debug!("mayastor nvmf fini");
-        if Config::by_ref().nexus_opts.nvmf_enable {
+        if Config::get().nexus_opts.nvmf_enable {
             NVMF_TGT.with(|tgt| {
                 tgt.borrow_mut().start_shutdown();
             });

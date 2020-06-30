@@ -85,7 +85,7 @@ impl Target {
     }
 
     pub fn init(&mut self) -> Result<()> {
-        let cfg = Config::by_ref();
+        let cfg = Config::get();
         let tgt_ptr: Box<spdk_nvmf_target_opts> =
             cfg.nvmf_tcp_tgt_conf.clone().into();
 
@@ -272,7 +272,7 @@ impl Target {
 
     /// Listen for incoming connections
     pub fn listen(&mut self) -> Result<()> {
-        let cfg = Config::by_ref();
+        let cfg = Config::get();
         let trid_nexus = TransportID::new(cfg.nexus_opts.nvmf_nexus_port);
         let rc = unsafe { spdk_nvmf_tgt_listen(self.tgt, trid_nexus.as_ptr()) };
 
@@ -359,7 +359,7 @@ impl Target {
 
         unsafe { spdk_poller_unregister(&mut self.accepter_poller) };
 
-        let cfg = Config::by_ref();
+        let cfg = Config::get();
         let trid_nexus = TransportID::new(cfg.nexus_opts.nvmf_nexus_port);
         let trid_replica = TransportID::new(cfg.nexus_opts.nvmf_replica_port);
 

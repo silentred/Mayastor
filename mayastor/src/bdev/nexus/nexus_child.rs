@@ -227,7 +227,7 @@ impl NexusChild {
             BdevHandle::try_from(self.desc.as_ref().unwrap().clone()).unwrap(),
         );
 
-        let cfg = Config::by_ref();
+        let cfg = Config::get();
         if cfg.err_store_opts.enable_err_store {
             self.err_store =
                 Some(NexusErrStore::new(cfg.err_store_opts.err_store_size));

@@ -382,7 +382,7 @@ pub(crate) struct Target {
 impl Target {
     /// Create preconfigured nvmf target with tcp transport and default options.
     pub fn create(addr: &str, port: u16) -> Result<Self> {
-        let cfg = Config::by_ref();
+        let cfg = Config::get();
 
         let mut tgt_opts = TargetOpts::new(
             &cfg.nvmf_tcp_tgt_conf.name,
@@ -680,8 +680,8 @@ impl fmt::Display for Target {
 
 /// Create nvmf target which will be used for exporting the replicas.
 pub async fn init(address: &str) -> Result<()> {
-    let config = Config::by_ref();
-    let replica_port = Config::by_ref().nexus_opts.nvmf_replica_port;
+    let config = Config::get();
+    let replica_port = Config::get().nexus_opts.nvmf_replica_port;
     let mut boxed_tgt = Box::new(Target::create(address, replica_port)?);
     boxed_tgt.add_tcp_transport().await?;
     boxed_tgt

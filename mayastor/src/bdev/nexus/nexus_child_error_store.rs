@@ -210,7 +210,7 @@ impl Nexus {
         io_num_blocks: u64,
     ) {
         let now = Instant::now();
-        let cfg = Config::by_ref();
+        let cfg = Config::get();
         if cfg.err_store_opts.enable_err_store {
             let nexus_name = self.name.clone();
             // dispatch message to management core to do this
@@ -276,7 +276,7 @@ impl Nexus {
             Some(a) => Instant::now().checked_sub(Duration::from_nanos(a)),
             None => None,
         };
-        let cfg = Config::by_ref();
+        let cfg = Config::get();
         if cfg.err_store_opts.enable_err_store {
             if let Some(child) =
                 self.children.iter().find(|c| c.name == child_name)

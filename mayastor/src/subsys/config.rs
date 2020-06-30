@@ -77,7 +77,7 @@ impl Config {
     }
 
     /// mostly similar as above, but we do not need to pass a closure
-    pub fn by_ref() -> &'static Self {
+    pub fn get() -> &'static Self {
         CONFIG.get().unwrap()
     }
 
@@ -111,9 +111,9 @@ impl Config {
         Ok(config)
     }
 
-    /// collect the current configuration into a new Config object that can
+    /// collect current configuration snapshot into a new Config object that can
     /// be exported to a file (YAML or JSON)
-    pub fn get_current(&self) -> Result<Self, ()> {
+    pub fn refresh(&self) -> Result<Self, ()> {
         // the config is immutable, so we construct a new one which is mutable
         // such that we can scribble in the current bdevs. The config
         // gets loaded with the current settings, as we know that these

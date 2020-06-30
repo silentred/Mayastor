@@ -45,7 +45,7 @@ impl MayastorSubsystem {
         // if no config file is given, simply return Ok().
         jsonrpc_register::<(), _, _, Error>("mayastor_config_export", |_| {
             let f = async move {
-                let cfg = Config::by_ref();
+                let cfg = Config::get().refresh().unwrap();
                 if let Some(target) = cfg.source.as_ref() {
                     if let Err(e) = cfg.write(&target) {
                         error!("error writing config file {} {}", target, e);
@@ -69,7 +69,7 @@ impl MayastorSubsystem {
     }
 
     extern "C" fn config(w: *mut spdk_json_write_ctx) {
-        let data = match serde_json::to_string(Config::by_ref()) {
+        let data = match serde_json::to_string(Config::get()) {
             Ok(it) => it,
             _ => return,
         };

@@ -5,6 +5,7 @@ use std::{
 
 use futures::channel::oneshot;
 use nix::errno::Errno;
+use std::{error::Error, os::raw, ptr::NonNull};
 
 pub(crate) trait AsStr {
     fn as_str(&self) -> &str;
@@ -79,7 +80,7 @@ where
 
 /// Callback for spdk async functions called with errno value.
 /// Special case of the more general done_cb() above. The advantage being
-/// that it converts the errno value to Result before it is sent so the
+/// that it converts the errno value to Result before it is sent, so the
 /// receiver can use receiver.await.expect(...)? notation for processing
 /// the result.
 pub extern "C" fn done_errno_cb(sender_ptr: *mut c_void, errno: i32) {
@@ -102,5 +103,74 @@ pub fn errno_result_from_i32<T>(val: T, errno: i32) -> ErrnoResult<T> {
         Ok(val)
     } else {
         Err(Errno::from_i32(errno.abs()))
+    }
+}
+
+/// Helper routines to convert from FFI functions
+pub(crate) trait FfiResult {
+    type Ok;
+    fn to_result<E: Error, F>(self, f: F) -> Result<Self::Ok, E>
+    where
+        F: FnOnce(Self) -> E,
+        Self: Sized;
+}
+
+impl<T> FfiResult for *mut T {
+    type Ok = NonNull<T>;
+
+    #[inline]
+    fn to_result<E: Error, F>(self, f: F) -> Result<Self::Ok, E>
+    where
+        F: FnOnce(Self) -> E,
+    {
+        NonNull::new(self).ok_or_else(|| f(self))
+    }
+}
+
+impl<T> FfiResult for *const T {
+    type Ok = *const T;
+
+    #[inline]
+    fn to_result<E: Error, F>(self, f: F) -> Result<Self::Ok, E>
+    where
+        F: FnOnce(Self) -> E,
+    {
+        if self.is_null() {
+            Err(f(self))
+        } else {
+            Ok(self)
+        }
+    }
+}
+
+impl FfiResult for raw::c_int {
+    type Ok = ();
+
+    #[inline]
+    fn to_result<E: Error + snafu::Error, F>(self, f: F) -> Result<Self::Ok, E>
+    where
+        F: FnOnce(Self) -> E,
+    {
+        if self == 0 {
+            Ok(())
+        } else {
+            Err(f(self))
+        }
+    }
+}
+
+impl FfiResult for u32 {
+    type Ok = ();
+
+    #[inline]
+    fn to_result<E: Error + snafu::Error, F>(self, f: F) -> Result<Self::Ok, E>
+    where
+        F: FnOnce(Self) -> E,
+    {
+        if self == 0 {
+            Ok(())
+        } else {
+            Err(f(self))
+        }
     }
 }

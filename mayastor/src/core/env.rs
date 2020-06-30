@@ -9,25 +9,8 @@ use std::{
 
 use byte_unit::{Byte, ByteUnit};
 use futures::future;
-use nix::sys::{
-    signal,
-    signal::{
-        pthread_sigmask,
-        SigHandler,
-        SigSet,
-        SigmaskHow,
-        Signal::{SIGINT, SIGTERM},
-    },
-};
-    sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
-        Arc,
-        Mutex,
-    },
-    time::Duration,
-};
+use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 
-use byte_unit::{Byte, ByteUnit};
 use futures::channel::oneshot;
 use once_cell::sync::Lazy;
 use snafu::Snafu;
@@ -52,7 +35,6 @@ use spdk_sys::{
 };
 use structopt::StructOpt;
 use tokio::{runtime::Builder, task};
-use tracing::instrument;
 
 use crate::{
     core::{
@@ -68,6 +50,7 @@ use crate::{
     subsys::Config,
     target::iscsi,
 };
+use std::time::Duration;
 
 fn parse_mb(src: &str) -> Result<i32, String> {
     // For compatibility, we check to see if there are no alphabetic characters
@@ -178,6 +161,7 @@ impl Default for MayastorCliArgs {
 pub static GLOBAL_RC: Lazy<Arc<Mutex<i32>>> =
     Lazy::new(|| Arc::new(Mutex::new(-1)));
 
+/// keep track if we have received a signal already
 pub static SIG_RECIEVED: Lazy<AtomicBool> =
     Lazy::new(|| AtomicBool::new(false));
 
@@ -287,7 +271,6 @@ impl Default for MayastorEnvironment {
 
 /// The actual routine which does the mayastor shutdown.
 /// Must be called on the same thread which did the init.
-#[instrument]
 async fn do_shutdown(arg: *mut c_void) {
     // we must enter the init thread explicitly here as this, typically, gets
     // called by the signal handler
@@ -303,22 +286,9 @@ async fn do_shutdown(arg: *mut c_void) {
         warn!("Mayastor stopped non-zero: {}", rc);
     }
 
-<<<<<<< HEAD
-    let rc_current = *GLOBAL_RC.lock().unwrap();
-
-    if rc_current != -1 {
-        // to avoid double shutdown when we are running with in the native test
-        // framework
-        std::process::exit(rc_current);
-    }
-
-    *GLOBAL_RC.lock().unwrap() = rc;
-
     nats::message_bus_stop();
 
-=======
->>>>>>> 12e9268... round two
-    let cfg = Config::by_ref();
+    let cfg = Config::get();
     if cfg.nexus_opts.iscsi_enable {
         iscsi::fini();
         debug!("iSCSI target down");
@@ -594,25 +564,24 @@ impl MayastorEnvironment {
 
     /// We implement our own default target init code here. Note that if there
     /// is an existing target we will fail the init process.
-    extern "C" fn target_init() -> Result<(), EnvError> {
-        let address = MayastorEnvironment::get_pod_ip().map_err(|e| {
-            error!("Invalid IP address: MY_POD_IP={}", e);
-            mayastor_env_stop(-1);
-            EnvError::InitLog
-        })?;
+    extern "C" fn target_init() -> bool {
+        let address = MayastorEnvironment::get_pod_ip()
+            .map_err(|e| {
+                error!("Invalid IP address: MY_POD_IP={}", e);
+                mayastor_env_stop(-1);
+            })
+            .unwrap();
 
-        let cfg = Config::by_ref();
+        let cfg = Config::get();
 
         if cfg.nexus_opts.iscsi_enable {
             if let Err(msg) = iscsi::init(&address) {
                 error!("Failed to initialize Mayastor iSCSI target: {}", msg);
-                return Err(EnvError::InitTarget {
-                    target: "iscsi".into(),
-                });
+                return false;
             }
         }
 
-        Ok(())
+        true
     }
 
     pub(crate) fn get_pod_ip() -> Result<String, String> {
@@ -628,6 +597,7 @@ impl MayastorEnvironment {
         }
     }
 
+    /// start the  JSON rpc server which listens only to a local path
     extern "C" fn start_rpc(rc: i32, arg: *mut c_void) {
         let ctx = unsafe { Box::from_raw(arg as *mut SubsystemCtx) };
 
@@ -640,15 +610,15 @@ impl MayastorEnvironment {
                 spdk_rpc_set_state(SPDK_RPC_RUNTIME);
             };
 
-            Self::target_init().unwrap();
+            let success = Self::target_init();
 
-            ctx.sender.send(true).unwrap();
+            ctx.sender.send(success).unwrap();
         }
     }
 
+    /// load the config and apply it before any subsystems have started.
+    /// there is currently no run time check that enforces this.
     fn load_yaml_config(&self) {
-        // load the config and apply it before any subsystems have started.
-        // there is currently no run time check that enforces this.
         let cfg = if let Some(yaml) = &self.mayastor_config {
             info!("loading YAML config file {}", yaml);
             Config::get_or_init(|| {
@@ -664,6 +634,7 @@ impl MayastorEnvironment {
         };
         cfg.apply();
     }
+
     /// initialize the core, call this before all else
     pub fn init(mut self) -> Self {
         // setup the logger as soon as possible
@@ -696,7 +667,6 @@ impl MayastorEnvironment {
 
         // launch the remote cores if any. note that during init these have to
         // be running as during setup cross call will take place.
-
         Cores::count()
             .into_iter()
             .for_each(|c| Reactors::launch_remote(c).unwrap());
@@ -707,6 +677,10 @@ impl MayastorEnvironment {
 
         let rpc = CString::new(self.rpc_addr.as_str()).unwrap();
 
+        // wait for all cores to be online, not sure if this is the right way
+        // but when using more then 16 cores, I saw some "weirdness"
+        // which could be related purely to logging.
+
         while Reactors::iter().any(|r| {
             r.get_state() == ReactorState::Init && r.core() != Cores::current()
         }) {
@@ -714,6 +688,8 @@ impl MayastorEnvironment {
         }
 
         info!("All cores locked and loaded!");
+
+        // ensure we are within the context of a spdk thread from here
         Mthread::get_init().enter();
 
         Reactor::block_on(async {
@@ -733,7 +709,7 @@ impl MayastorEnvironment {
         });
 
         // load any bdevs that need to be created
-        Config::by_ref().import_bdevs();
+        Config::get().import_bdevs();
 
         self
     }
