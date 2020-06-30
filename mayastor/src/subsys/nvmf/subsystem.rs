@@ -41,7 +41,9 @@ use spdk_sys::{
     spdk_nvmf_subsystem_stop,
     SPDK_NVMF_SUBTYPE_NVME,
 };
+use std::ptr::NonNull;
 
+pub struct NvmfSubsystem(pub(crate) NonNull<spdk_nvmf_subsystem>);
 pub struct NvmfSubsystemIterator(*mut spdk_nvmf_subsystem);
 
 impl Iterator for NvmfSubsystemIterator {
@@ -56,9 +58,6 @@ impl Iterator for NvmfSubsystemIterator {
         }
     }
 }
-
-/// new type around a nvmf subsystem
-pub struct NvmfSubsystem(*mut spdk_nvmf_subsystem);
 
 impl IntoIterator for NvmfSubsystem {
     type Item = NvmfSubsystem;
@@ -84,7 +83,7 @@ impl Debug for NvmfSubsystem {
 
 impl From<*mut spdk_nvmf_subsystem> for NvmfSubsystem {
     fn from(s: *mut spdk_nvmf_subsystem) -> Self {
-        NvmfSubsystem(s)
+        NvmfSubsystem(NonNull::new(s).unwrap())
     }
 }
 
@@ -139,7 +138,7 @@ impl NvmfSubsystem {
                 msg: "failed to set serial".into(),
             })?;
 
-        Ok(NvmfSubsystem(ss.as_ptr()))
+        Ok(NvmfSubsystem(ss))
     }
 
     /// unfortunately, we cannot always use the bdev UUID which is a shame and
@@ -157,7 +156,7 @@ impl NvmfSubsystem {
         opts.nguid = bdev.uuid().as_bytes();
         let ns_id = unsafe {
             spdk_nvmf_subsystem_add_ns(
-                self.0,
+                self.0.as_ptr(),
                 bdev.as_ptr(),
                 &opts as *const _,
                 size_of::<spdk_bdev_nvme_opts>() as u64,
@@ -181,16 +180,22 @@ impl NvmfSubsystem {
 
     /// destroy the subsystem
     pub fn destroy(&self) {
-        unsafe { spdk_nvmf_subsystem_destroy(self.0) }
+        unsafe { spdk_nvmf_subsystem_destroy(self.0.as_ptr()) }
     }
 
     /// Get NVMe subsystem's NQN
     pub fn get_nqn(&self) -> String {
-        unsafe { spdk_nvmf_subsystem_get_nqn(self.0).as_str().to_string() }
+        unsafe {
+            spdk_nvmf_subsystem_get_nqn(self.0.as_ptr())
+                .as_str()
+                .to_string()
+        }
     }
 
     pub fn allow_any(&self, enable: bool) {
-        unsafe { spdk_nvmf_subsystem_set_allow_any_host(self.0, enable) };
+        unsafe {
+            spdk_nvmf_subsystem_set_allow_any_host(self.0.as_ptr(), enable)
+        };
     }
 
     // we currently allow all listeners to the subsystem
@@ -209,7 +214,7 @@ impl NvmfSubsystem {
         let (s, r) = oneshot::channel::<i32>();
         unsafe {
             spdk_nvmf_subsystem_add_listener(
-                self.0,
+                self.0.as_ptr(),
                 trid_replica.as_ptr(),
                 Some(listen_cb),
                 cb_arg(s),
@@ -249,12 +254,18 @@ impl NvmfSubsystem {
 
         let (s, r) = oneshot::channel::<i32>();
 
-        unsafe { spdk_nvmf_subsystem_start(self.0, Some(start_cb), cb_arg(s)) }
-            .to_result(|e| Error::Subsystem {
-                source: Errno::from_i32(e),
-                nqn: self.get_nqn(),
-                msg: "out of memory".to_string(),
-            })?;
+        unsafe {
+            spdk_nvmf_subsystem_start(
+                self.0.as_ptr(),
+                Some(start_cb),
+                cb_arg(s),
+            )
+        }
+        .to_result(|e| Error::Subsystem {
+            source: Errno::from_i32(e),
+            nqn: self.get_nqn(),
+            msg: "out of memory".to_string(),
+        })?;
 
         r.await.unwrap().to_result(|e| Error::Subsystem {
             source: Errno::from_i32(e),
@@ -285,8 +296,10 @@ impl NvmfSubsystem {
 
         let (s, r) = oneshot::channel::<i32>();
         debug!("stopping {:?}", self);
-        unsafe { spdk_nvmf_subsystem_stop(self.0, Some(stop_cb), cb_arg(s)) }
-            .to_result(|e| Error::Subsystem {
+        unsafe {
+            spdk_nvmf_subsystem_stop(self.0.as_ptr(), Some(stop_cb), cb_arg(s))
+        }
+        .to_result(|e| Error::Subsystem {
             source: Errno::from_i32(e),
             nqn: self.get_nqn(),
             msg: "out of memory".to_string(),
@@ -323,12 +336,18 @@ impl NvmfSubsystem {
 
         let (s, r) = oneshot::channel::<i32>();
 
-        unsafe { spdk_nvmf_subsystem_pause(self.0, Some(pause_cb), cb_arg(s)) }
-            .to_result(|e| Error::Subsystem {
-                source: Errno::from_i32(e),
-                nqn: self.get_nqn(),
-                msg: "out of memory".to_string(),
-            })?;
+        unsafe {
+            spdk_nvmf_subsystem_pause(
+                self.0.as_ptr(),
+                Some(pause_cb),
+                cb_arg(s),
+            )
+        }
+        .to_result(|e| Error::Subsystem {
+            source: Errno::from_i32(e),
+            nqn: self.get_nqn(),
+            msg: "out of memory".to_string(),
+        })?;
 
         r.await.unwrap().to_result(|e| Error::Subsystem {
             source: Errno::from_i32(e),
@@ -360,7 +379,11 @@ impl NvmfSubsystem {
         let (s, r) = oneshot::channel::<i32>();
 
         let mut rc = unsafe {
-            spdk_nvmf_subsystem_resume(self.0, Some(resume_cb), cb_arg(s))
+            spdk_nvmf_subsystem_resume(
+                self.0.as_ptr(),
+                Some(resume_cb),
+                cb_arg(s),
+            )
         };
 
         if rc != 0 {
@@ -404,7 +427,7 @@ impl NvmfSubsystem {
             if ss.is_null() {
                 None
             } else {
-                Some(NvmfSubsystem(ss))
+                Some(NvmfSubsystem(NonNull::new(ss).unwrap()))
             }
         })
     }
@@ -420,7 +443,7 @@ impl NvmfSubsystem {
     /// get the bdev associated with this subsystem -- we implicitly assume the
     /// first namespace
     pub fn bdev(&self) -> Bdev {
-        let ns = unsafe { spdk_nvmf_subsystem_get_first_ns(self.0) };
+        let ns = unsafe { spdk_nvmf_subsystem_get_first_ns(self.0.as_ptr()) };
         let b = unsafe { spdk_nvmf_ns_get_bdev(ns) };
         if b.is_null() {
             panic!("no bdev");
@@ -430,7 +453,8 @@ impl NvmfSubsystem {
 
     fn listeners_to_vec(&self) -> Option<Vec<TransportID>> {
         unsafe {
-            let mut listener = spdk_nvmf_subsystem_get_first_listener(self.0);
+            let mut listener =
+                spdk_nvmf_subsystem_get_first_listener(self.0.as_ptr());
 
             if listener.is_null() {
                 return None;
@@ -441,8 +465,10 @@ impl NvmfSubsystem {
             )];
 
             loop {
-                listener =
-                    spdk_nvmf_subsystem_get_next_listener(self.0, listener);
+                listener = spdk_nvmf_subsystem_get_next_listener(
+                    self.0.as_ptr(),
+                    listener,
+                );
                 if !listener.is_null() {
                     ids.push(TransportID(
                         *spdk_nvmf_subsystem_listener_get_trid(listener),
