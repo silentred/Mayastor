@@ -22,7 +22,10 @@ use spdk_sys::{
 pub use subsystem::NvmfSubsystem;
 pub use target::Target;
 
-use crate::{core::Bdev, subsys::Config};
+use crate::{
+    core::Bdev,
+    subsys::{nvmf::target::NVMF_TGT, Config},
+};
 
 mod poll_groups;
 mod subsystem;
@@ -65,7 +68,6 @@ pub enum Error {
 }
 
 thread_local! {
-    pub (crate) static NVMF_TGT: RefCell<Target> = RefCell::new(Target::new());
     pub (crate) static NVMF_PGS: RefCell<Vec<PollGroup>> = RefCell::new(Vec::new());
 }
 

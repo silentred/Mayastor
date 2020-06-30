@@ -1,7 +1,5 @@
 use std::ffi::c_void;
 
-use rand::seq::SliceRandom;
-
 use crate::{
     core::{Cores, Mthread, Reactors},
     ffihelper::AsStr,
@@ -13,11 +11,11 @@ use crate::{
             transport::{get_ipv4_address, TransportID},
             Error,
             NVMF_PGS,
-            NVMF_TGT,
         },
         Config,
     },
 };
+use rand::seq::SliceRandom;
 use spdk_sys::{
     spdk_env_get_core_count,
     spdk_nvmf_get_optimal_poll_group,
@@ -26,6 +24,8 @@ use spdk_sys::{
     spdk_nvmf_poll_group_destroy,
     spdk_nvmf_qpair,
     spdk_nvmf_qpair_disconnect,
+    spdk_nvmf_subsystem_allow_any_listener,
+    spdk_nvmf_subsystem_create,
     spdk_nvmf_target_opts,
     spdk_nvmf_tgt,
     spdk_nvmf_tgt_accept,
@@ -38,10 +38,16 @@ use spdk_sys::{
     spdk_poller_unregister,
     spdk_subsystem_fini_next,
     spdk_subsystem_init_next,
+    SPDK_NVMF_DISCOVERY_NQN,
+    SPDK_NVMF_SUBTYPE_DISCOVERY,
 };
-use std::ptr::NonNull;
+use std::{cell::RefCell, ptr::NonNull};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+thread_local! {
+pub (crate) static NVMF_TGT: RefCell<Target> = RefCell::new(Target::new());
+}
 
 #[derive(Debug)]
 pub struct Target {
@@ -81,7 +87,7 @@ impl Target {
     /// we create a target by going through different stages. Its loosely
     /// modeled as the native target so that we can "creep in" changes as
     /// the API is not stable.
-    pub fn new() -> Self {
+    fn new() -> Self {
         assert_eq!(Cores::current(), Cores::first());
         Self {
             tgt: NonNull::dangling(),
@@ -104,6 +110,18 @@ impl Target {
             });
         }
         self.tgt = NonNull::new(tgt).unwrap();
+        unsafe {
+            let discovery = spdk_nvmf_subsystem_create(
+                self.tgt.as_ptr(),
+                SPDK_NVMF_DISCOVERY_NQN.as_ptr() as *const i8,
+                SPDK_NVMF_SUBTYPE_DISCOVERY,
+                0,
+            );
+            assert_eq!(discovery.is_null(), false);
+
+            spdk_nvmf_subsystem_allow_any_listener(discovery, true);
+        };
+
         self.next_state();
         Ok(())
     }
