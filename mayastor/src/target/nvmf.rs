@@ -716,7 +716,7 @@ pub async fn fini() -> Result<()> {
 /// Export given bdev over nvmf target.
 pub async fn share(uuid: &str, bdev: &Bdev) -> Result<()> {
     if let Some(ss) = NvmfSubsystem::nqn_lookup(uuid) {
-        assert_eq!(bdev.name(), ss.bdev().name());
+        assert_eq!(bdev.name(), ss.bdev().unwrap().name());
         return Ok(());
     };
     let ss = NvmfSubsystem::try_from(bdev).unwrap();

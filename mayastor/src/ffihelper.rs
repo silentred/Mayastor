@@ -1,11 +1,15 @@
 use std::{
+    error::Error,
     ffi::{CStr, CString},
-    os::raw::{c_char, c_void},
+    os::{
+        raw,
+        raw::{c_char, c_void},
+    },
+    ptr::NonNull,
 };
 
 use futures::channel::oneshot;
 use nix::errno::Errno;
-use std::{error::Error, os::raw, ptr::NonNull};
 
 pub(crate) trait AsStr {
     fn as_str(&self) -> &str;
@@ -154,7 +158,7 @@ impl FfiResult for raw::c_int {
         if self == 0 {
             Ok(())
         } else {
-            Err(f(self))
+            Err(f(self.abs()))
         }
     }
 }

@@ -3,19 +3,18 @@ use std::{
     fmt::Debug,
     mem::size_of,
     ptr,
+    ptr::NonNull,
 };
 
-use crate::{
-    core::{Bdev, Reactors},
-    ffihelper::{cb_arg, AsStr, FfiResult, IntoCString},
-    subsys::{
-        nvmf::{transport::TransportID, Error, NVMF_TGT},
-        Config,
-    },
-};
 use futures::channel::oneshot;
 use nix::errno::Errno;
 use serde::export::{Formatter, TryFrom};
+
+#[derive(Debug, PartialOrd, PartialEq)]
+pub enum SubType {
+    Nvme,
+    Discovery,
+}
 use spdk_sys::{
     spdk_bdev_nvme_opts,
     spdk_nvmf_ns_get_bdev,
@@ -39,9 +38,18 @@ use spdk_sys::{
     spdk_nvmf_subsystem_set_sn,
     spdk_nvmf_subsystem_start,
     spdk_nvmf_subsystem_stop,
+    SPDK_NVMF_SUBTYPE_DISCOVERY,
     SPDK_NVMF_SUBTYPE_NVME,
 };
-use std::ptr::NonNull;
+
+use crate::{
+    core::{Bdev, Reactors},
+    ffihelper::{cb_arg, AsStr, FfiResult, IntoCString},
+    subsys::{
+        nvmf::{transport::TransportID, Error, NVMF_TGT},
+        Config,
+    },
+};
 
 pub struct NvmfSubsystem(pub(crate) NonNull<spdk_nvmf_subsystem>);
 pub struct NvmfSubsystemIterator(*mut spdk_nvmf_subsystem);
@@ -54,7 +62,11 @@ impl Iterator for NvmfSubsystemIterator {
         } else {
             let current = self.0;
             self.0 = unsafe { spdk_nvmf_subsystem_get_next(current) };
-            Some(NvmfSubsystem::from(current))
+            if !self.0.is_null() {
+                Some(NvmfSubsystem(NonNull::new(self.0).unwrap()))
+            } else {
+                None
+            }
         }
     }
 }
@@ -191,7 +203,7 @@ impl NvmfSubsystem {
                 .to_string()
         }
     }
-
+    /// allow any host to connect to the subsystem
     pub fn allow_any(&self, enable: bool) {
         unsafe {
             spdk_nvmf_subsystem_set_allow_any_host(self.0.as_ptr(), enable)
@@ -406,7 +418,8 @@ impl NvmfSubsystem {
         }
     }
 
-    /// destroy all subsystems associated with our target
+    /// destroy all subsystems associated with our target, subsystems must be in
+    /// stopped state
     pub fn destroy_all() {
         Reactors::master().send_future(async {
             NvmfSubsystem::first().iter().for_each(|s| s.destroy());
@@ -415,6 +428,13 @@ impl NvmfSubsystem {
                 tgt.next_state()
             })
         });
+    }
+
+    /// stop all subsystems
+    pub async fn stop_all() {
+        for s in NvmfSubsystem::first().iter() {
+            s.stop().await.unwrap();
+        }
     }
 
     /// Get the first subsystem within the system
@@ -442,13 +462,17 @@ impl NvmfSubsystem {
 
     /// get the bdev associated with this subsystem -- we implicitly assume the
     /// first namespace
-    pub fn bdev(&self) -> Bdev {
+    pub fn bdev(&self) -> Option<Bdev> {
         let ns = unsafe { spdk_nvmf_subsystem_get_first_ns(self.0.as_ptr()) };
+        if ns.is_null() {
+            return None;
+        }
         let b = unsafe { spdk_nvmf_ns_get_bdev(ns) };
         if b.is_null() {
-            panic!("no bdev");
+            return None;
         }
-        Bdev::from(b)
+
+        Some(Bdev::from(b))
     }
 
     fn listeners_to_vec(&self) -> Option<Vec<TransportID>> {
@@ -479,6 +503,16 @@ impl NvmfSubsystem {
                 }
             }
             Some(ids)
+        }
+    }
+
+    pub fn subtype(&self) -> SubType {
+        unsafe {
+            match self.0.as_ref().subtype {
+                SPDK_NVMF_SUBTYPE_DISCOVERY => SubType::Discovery,
+                SPDK_NVMF_SUBTYPE_NVME => SubType::Discovery,
+                _ => panic!("unknown NVMe subtype"),
+            }
         }
     }
 

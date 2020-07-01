@@ -21,7 +21,14 @@ use spdk_sys::{
 };
 
 use crate::{
-    ffihelper::{cb_arg, done_errno_cb, AsStr, ErrnoResult},
+    ffihelper::{
+        cb_arg,
+        done_errno_cb,
+        AsStr,
+        ErrnoResult,
+        FfiResult,
+        IntoCString,
+    },
     subsys::{
         nvmf::{Error, NVMF_TGT},
         Config,
@@ -39,26 +46,24 @@ pub async fn add_tcp_transport() -> Result<(), Error> {
         spdk_nvmf_transport_create(TCP_TRANSPORT.as_ptr(), &mut opts)
     };
 
-    if transport.is_null() {
-        return Err(Error::Transport {
-            source: Errno::UnknownErrno,
-            msg: "failed to create transport".into(),
-        });
-    }
+    transport.to_result(|_| Error::Transport {
+        source: Errno::UnknownErrno,
+        msg: "failed to create transport".into(),
+    })?;
 
-    let (sender, receiver) = oneshot::channel::<ErrnoResult<()>>();
+    let (s, r) = oneshot::channel::<ErrnoResult<()>>();
     unsafe {
         NVMF_TGT.with(|t| {
             spdk_nvmf_tgt_add_transport(
                 t.borrow().tgt.as_ptr(),
                 transport,
                 Some(done_errno_cb),
-                cb_arg(sender),
+                cb_arg(s),
             );
         })
     };
 
-    let _result = receiver.await.unwrap();
+    let _result = r.await.unwrap();
 
     debug!("Added TCP nvmf transport");
     Ok(())
@@ -87,11 +92,11 @@ impl TransportID {
         trid.trtype = SPDK_NVME_TRANSPORT_TCP;
         trid.adrfam = SPDK_NVMF_ADRFAM_IPV4;
 
-        let c_addr = CString::new(address.as_str()).unwrap();
+        let c_addr = address.into_cstring();
         let port = format!("{}", port);
 
         assert!(port.len() < SPDK_NVMF_TRSVCID_MAX_LEN as usize);
-        let c_port = CString::new(port.clone()).unwrap();
+        let c_port = port.into_cstring();
 
         unsafe {
             copy_nonoverlapping(
@@ -102,12 +107,12 @@ impl TransportID {
             copy_nonoverlapping(
                 c_addr.as_ptr(),
                 &mut trid.traddr[0],
-                address.len() + 1,
+                c_addr.as_bytes().len(),
             );
             copy_nonoverlapping(
                 c_port.as_ptr(),
                 &mut trid.trsvcid[0],
-                port.len() + 1,
+                c_port.as_bytes().len(),
             );
         }
         Self(trid)

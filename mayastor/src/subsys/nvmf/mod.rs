@@ -19,7 +19,7 @@ use spdk_sys::{
     spdk_subsystem_fini_next,
     spdk_subsystem_init_next,
 };
-pub use subsystem::NvmfSubsystem;
+pub use subsystem::{NvmfSubsystem, SubType};
 pub use target::Target;
 
 use crate::{

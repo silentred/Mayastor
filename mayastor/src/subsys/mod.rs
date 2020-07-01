@@ -5,7 +5,7 @@
 use futures::FutureExt;
 
 pub use config::{BaseBdev, Config, NexusBdev, Pool};
-pub use nvmf::{NvmfSubsystem, Target as NvmfTarget};
+pub use nvmf::{NvmfSubsystem, SubType, Target as NvmfTarget};
 pub use opts::NexusOpts;
 use spdk_sys::{
     spdk_add_subsystem,
