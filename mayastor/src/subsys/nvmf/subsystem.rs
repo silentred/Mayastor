@@ -15,6 +15,14 @@ pub enum SubType {
     Nvme,
     Discovery,
 }
+use crate::{
+    core::{Bdev, Reactors},
+    ffihelper::{cb_arg, AsStr, FfiResult, IntoCString},
+    subsys::{
+        nvmf::{transport::TransportID, Error, NVMF_TGT},
+        Config,
+    },
+};
 use spdk_sys::{
     spdk_bdev_nvme_opts,
     spdk_nvmf_ns_get_bdev,
@@ -38,18 +46,11 @@ use spdk_sys::{
     spdk_nvmf_subsystem_set_sn,
     spdk_nvmf_subsystem_start,
     spdk_nvmf_subsystem_stop,
+    spdk_nvmf_tgt,
     SPDK_NVMF_SUBTYPE_DISCOVERY,
     SPDK_NVMF_SUBTYPE_NVME,
 };
-
-use crate::{
-    core::{Bdev, Reactors},
-    ffihelper::{cb_arg, AsStr, FfiResult, IntoCString},
-    subsys::{
-        nvmf::{transport::TransportID, Error, NVMF_TGT},
-        Config,
-    },
-};
+use tracing::instrument;
 
 pub struct NvmfSubsystem(pub(crate) NonNull<spdk_nvmf_subsystem>);
 pub struct NvmfSubsystemIterator(*mut spdk_nvmf_subsystem);
@@ -431,8 +432,13 @@ impl NvmfSubsystem {
     }
 
     /// stop all subsystems
-    pub async fn stop_all() {
-        for s in NvmfSubsystem::first().iter() {
+    pub async fn stop_all(tgt: *mut spdk_nvmf_tgt) {
+        let ss = unsafe {
+            NvmfSubsystem(
+                NonNull::new(spdk_nvmf_subsystem_get_first(tgt)).unwrap(),
+            )
+        };
+        for s in ss.into_iter() {
             s.stop().await.unwrap();
         }
     }
@@ -453,9 +459,11 @@ impl NvmfSubsystem {
     }
 
     /// lookup a subsystem by its UUID
+    #[instrument]
     pub fn nqn_lookup(uuid: &str) -> Option<NvmfSubsystem> {
         let nqn = gen_nqn(uuid);
         NvmfSubsystem::first()
+            .unwrap()
             .into_iter()
             .find(|s| s.get_nqn() == nqn)
     }

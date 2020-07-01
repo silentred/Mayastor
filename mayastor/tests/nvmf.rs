@@ -41,6 +41,13 @@ fn nvmf_target() {
                 assert_eq!(should_err.is_err(), true);
             });
 
+            Reactor::block_on(async {
+                assert_eq!(
+                    NvmfSubsystem::first().unwrap().into_iter().count(),
+                    1
+                );
+            });
+
             // verify the bdev is claimed by our target
             Reactor::block_on(async {
                 let bdev = Bdev::bdev_first().unwrap();

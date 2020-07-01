@@ -346,11 +346,13 @@ impl Target {
         Ok(())
     }
 
-    /// enable discovery for the target
-    async fn enable_discovery(tgt: NonNull<spdk_nvmf_tgt>) {
+    /// enable discovery for the target -- note that the discovery system is not
+    /// started
+    fn enable_discovery(&self) {
+        debug!("enabling discovery for target");
         let discovery = unsafe {
             NvmfSubsystem::from(spdk_nvmf_subsystem_create(
-                tgt.as_ptr(),
+                self.tgt.as_ptr(),
                 SPDK_NVMF_DISCOVERY_NQN.as_ptr() as *const i8,
                 SPDK_NVMF_SUBTYPE_DISCOVERY,
                 0,
@@ -358,21 +360,16 @@ impl Target {
         };
 
         discovery.allow_any(true);
-        discovery
-            .start()
-            .await
-            .map_err(|_e| {
-                error!("failed to enable discovery for the nvmf target");
-            })
-            .unwrap();
     }
 
-    /// stop all subsystems on this target
+    /// stop all subsystems on this target we are borrowed here
     fn stop_subsystems(&self) {
-        Reactors::master().send_future(async {
-            NvmfSubsystem::stop_all().await;
+        let tgt = self.tgt.as_ptr();
+        Reactors::master().send_future(async move {
+            NvmfSubsystem::stop_all(tgt).await;
+            debug!("all subsystems stopped!");
             NvmfSubsystem::destroy_all();
-        })
+        });
     }
 
     /// destroy all portal groups on this target
@@ -414,15 +411,13 @@ impl Target {
 
     /// final state for the target during init
     pub fn running(&mut self) {
-        Reactors::current().send_future(async {
-                    let tgt = NVMF_TGT.with(|t| t.borrow().tgt);
-                    Self::enable_discovery(tgt).await;
-                    info!(
-                        "nvmf target accepting new connections and is ready to role..{}",
-                        '\u{1F483}');
+        self.enable_discovery();
+        info!(
+            "nvmf target accepting new connections and is ready to role..{}",
+            '\u{1F483}'
+        );
 
-                    unsafe { spdk_subsystem_init_next(0) }
-                });
+        unsafe { spdk_subsystem_init_next(0) }
     }
 
     ///  shutdown procedure
