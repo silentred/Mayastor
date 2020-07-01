@@ -14,6 +14,7 @@ use spdk_sys::{
     spdk_bdev_desc,
     spdk_bdev_free_io,
     spdk_bdev_io,
+    spdk_bdev_nvme_admin_passthru,
     spdk_bdev_read,
     spdk_bdev_reset,
     spdk_bdev_write,
@@ -188,6 +189,40 @@ impl BdevHandle {
         }
 
         if r.await.expect("Failed awaiting reset IO") {
+            Ok(0)
+        } else {
+            Err(CoreError::ResetFailed {})
+        }
+    }
+
+    pub async fn create_snapshot(
+        &self,
+        snapshot_name: &str,
+    ) -> Result<usize, CoreError> {
+        let mut cmd = spdk_sys::spdk_nvme_cmd::default();
+        cmd.set_opc(0xc0);
+        trace!("Creating snapshot {}", snapshot_name);
+        let mut sn = String::from(snapshot_name);
+        let (s, r) = oneshot::channel::<bool>();
+        let errno = unsafe {
+            spdk_bdev_nvme_admin_passthru(
+                self.desc.as_ptr(),
+                self.channel.as_ptr(),
+                &cmd,
+                sn.as_mut_ptr() as *mut nix::libc::c_void,
+                sn.len() as u64,
+                Some(Self::io_completion_cb),
+                cb_arg(s),
+            )
+        };
+
+        if errno != 0 {
+            return Err(CoreError::ResetDispatch {
+                source: Errno::from_i32(errno),
+            });
+        }
+
+        if r.await.expect("Failed awaiting NVME Admin IO") {
             Ok(0)
         } else {
             Err(CoreError::ResetFailed {})

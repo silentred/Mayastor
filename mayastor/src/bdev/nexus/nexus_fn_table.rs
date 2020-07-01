@@ -30,7 +30,7 @@ pub struct NexusFnTable {
 unsafe impl Sync for NexusFnTable {}
 unsafe impl Send for NexusFnTable {}
 
-/// The FN table are function pointers called by SPDK when work is send
+/// The FN table are function pointers called by SPDK when work is sent
 /// our way. The functions are static, and shared between all instances.
 
 impl NexusFnTable {
@@ -52,7 +52,7 @@ impl NexusFnTable {
         &NEXUS_FN_TBL.f_tbl
     }
 
-    /// check all the children for the specified IO type and return if it
+    /// check all the children for the specified IO type and return if it is
     /// supported
     extern "C" fn io_supported(
         ctx: *mut c_void,
@@ -60,8 +60,8 @@ impl NexusFnTable {
     ) -> bool {
         let nexus = unsafe { Nexus::from_raw(ctx) };
         match io_type {
-            // we always assume the device supports read/write commands
-            io_type::READ | io_type::WRITE => true,
+            // we always assume the device supports read/write/admin commands
+            io_type::READ | io_type::WRITE | io_type::NVME_ADMIN => true,
             io_type::FLUSH
             | io_type::RESET
             | io_type::UNMAP
@@ -120,6 +120,14 @@ impl NexusFnTable {
                 }
                 io_type::FLUSH => nexus.flush(io, &ch),
                 io_type::WRITE_ZEROES => nexus.write_zeroes(io, &ch),
+                io_type::NVME_ADMIN => {
+                    trace!(
+                        "{}: Dispatching NVME_ADMIN {:p}",
+                        nexus.bdev.name(),
+                        io
+                    );
+                    nexus.nvme_admin(io, &ch)
+                }
 
                 _ => panic!(
                     "{} Received unsupported IO! type {}",

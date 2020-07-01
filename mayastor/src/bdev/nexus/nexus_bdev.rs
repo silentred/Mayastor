@@ -23,6 +23,7 @@ use spdk_sys::{
     spdk_bdev_flush_blocks,
     spdk_bdev_io,
     spdk_bdev_io_get_buf,
+    spdk_bdev_nvme_admin_passthru,
     spdk_bdev_readv_blocks,
     spdk_bdev_register,
     spdk_bdev_reset,
@@ -930,6 +931,88 @@ impl Nexus {
             })
             .collect::<Vec<_>>();
 
+        if results.iter().any(|r| *r != 0) {
+            error!(
+                "{}: Failed to submit dispatched IO {:?}",
+                io.nexus_as_ref().name,
+                pio
+            );
+        }
+    }
+
+    pub(crate) fn nvme_admin(
+        &self,
+        pio: *mut spdk_bdev_io,
+        channels: &NexusChannelInner,
+    ) {
+        let mut io = Bio(pio);
+        if io.nvme_cmd().opc() == 0xc0 {
+            self.create_snapshot(pio, &channels);
+            return;
+        }
+        // pass through to underlying device
+        io.ctx_as_mut_ref().in_flight = channels.ch.len() as i8;
+        let results = channels
+            .ch
+            .iter()
+            .map(|c| unsafe {
+                let (bdev, chan) = c.io_tuple();
+                trace!("Dispatched NVME_ADMIN");
+                spdk_bdev_nvme_admin_passthru(
+                    bdev,
+                    chan,
+                    &io.nvme_cmd(),
+                    io.nvme_buf(),
+                    io.nvme_nbytes(),
+                    Some(Self::io_completion),
+                    pio as *mut _,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // if any of the children failed to dispatch
+        if results.iter().any(|r| *r != 0) {
+            error!(
+                "{}: Failed to submit dispatched IO {:?}",
+                io.nexus_as_ref().name,
+                pio
+            );
+        }
+    }
+
+    /// create snapshots on all underlying children
+    /// FIXME: pause IO before snapshot
+    fn create_snapshot(
+        &self,
+        pio: *mut spdk_bdev_io,
+        channels: &NexusChannelInner,
+    ) {
+        let mut io = Bio(pio);
+        let len: usize = io.nvme_nbytes() as usize;
+        let snapshot_name = unsafe {
+            String::from_raw_parts(io.nvme_buf() as *mut u8, len, len)
+        };
+        trace!("Creating snapshot {}", snapshot_name);
+        io.ctx_as_mut_ref().in_flight = channels.ch.len() as i8;
+        let results = channels
+            .ch
+            .iter()
+            .map(|c| unsafe {
+                let (bdev, chan) = c.io_tuple();
+                trace!("Dispatched NVME_ADMIN");
+                spdk_bdev_nvme_admin_passthru(
+                    bdev,
+                    chan,
+                    &io.nvme_cmd(),
+                    io.nvme_buf(),
+                    io.nvme_nbytes(),
+                    Some(Self::io_completion),
+                    pio as *mut _,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // if any of the children failed to dispatch
         if results.iter().any(|r| *r != 0) {
             error!(
                 "{}: Failed to submit dispatched IO {:?}",
