@@ -449,16 +449,17 @@ impl Target {
         unsafe { spdk_poller_unregister(&mut self.acceptor_poller.as_ptr()) };
 
         let cfg = Config::get();
-        //let trid_nexus = TransportID::new(cfg.nexus_opts.nvmf_nexus_port);
+        let trid_nexus = TransportID::new(cfg.nexus_opts.nvmf_nexus_port);
         let trid_replica = TransportID::new(cfg.nexus_opts.nvmf_replica_port);
 
         unsafe {
             spdk_nvmf_tgt_stop_listen(self.tgt.as_ptr(), trid_replica.as_ptr())
         };
-        // unsafe {
-        //     spdk_nvmf_tgt_stop_listen(self.tgt.as_ptr(), trid_nexus.as_ptr())
-        // };
-        //
+
+        unsafe {
+            spdk_nvmf_tgt_stop_listen(self.tgt.as_ptr(), trid_nexus.as_ptr())
+        };
+
         unsafe {
             spdk_nvmf_tgt_destroy(
                 self.tgt.as_ptr(),

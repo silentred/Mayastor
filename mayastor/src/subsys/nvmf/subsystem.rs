@@ -62,7 +62,6 @@ use spdk_sys::{
     SPDK_NVMF_SUBTYPE_NVME,
 };
 use std::fmt::Display;
-use tracing::instrument;
 
 pub struct NvmfSubsystem(pub(crate) NonNull<spdk_nvmf_subsystem>);
 pub struct NvmfSubsystemIterator(*mut spdk_nvmf_subsystem);
@@ -478,7 +477,6 @@ impl NvmfSubsystem {
     }
 
     /// lookup a subsystem by its UUID
-    #[instrument]
     pub fn nqn_lookup(uuid: &str) -> Option<NvmfSubsystem> {
         let nqn = gen_nqn(uuid);
         NvmfSubsystem::first()

@@ -41,36 +41,37 @@ fn nvmf_target() {
                 assert_eq!(should_err.is_err(), true);
             });
 
+            // we should have at least 2 subsystems
             Reactor::block_on(async {
                 assert_eq!(
                     NvmfSubsystem::first().unwrap().into_iter().count(),
-                    1
+                    2
                 );
             });
 
-            // verify the bdev is claimed by our target
+            // verify the bdev is claimed by our target -- make sure we skip
+            // over the discovery controller
             Reactor::block_on(async {
                 let bdev = Bdev::bdev_first().unwrap();
                 assert_eq!(bdev.is_claimed(), true);
                 assert_eq!(bdev.claimed_by().unwrap(), "NVMe-oF Target");
 
-                let mut ss = NvmfSubsystem::first().unwrap();
-                // skip the discovery controller
-                if ss.subtype() == SubType::Discovery {
-                    ss = ss.into_iter().next().unwrap();
+                let ss = NvmfSubsystem::first().unwrap();
+                for s in ss {
+                    if s.subtype() == SubType::Discovery {
+                        continue;
+                    }
+                    s.stop().await.unwrap();
+                    let sbdev = s.bdev().unwrap();
+                    assert_eq!(sbdev.name(), bdev.name());
+
+                    assert_eq!(bdev.is_claimed(), true);
+                    assert_eq!(bdev.claimed_by().unwrap(), "NVMe-oF Target");
+
+                    s.destroy();
+                    assert_eq!(bdev.is_claimed(), false);
+                    assert_eq!(bdev.claimed_by(), None);
                 }
-
-                ss.stop().await.unwrap();
-                let sbdev = ss.bdev().unwrap();
-
-                assert_eq!(sbdev.name(), bdev.name());
-
-                assert_eq!(bdev.is_claimed(), true);
-                assert_eq!(bdev.claimed_by().unwrap(), "NVMe-oF Target");
-
-                ss.destroy();
-                assert_eq!(bdev.is_claimed(), false);
-                assert_eq!(bdev.claimed_by(), None);
             });
             // this should clean/up kill the discovery controller
             mayastor_env_stop(0);
