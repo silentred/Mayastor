@@ -509,7 +509,7 @@ impl Future for &'static Reactor {
                 }
 
                 unsafe { spdk_env_thread_wait_all() };
-                Poll::Ready(Ok(()))
+                Poll::Ready(Err(()))
             }
             ReactorState::Delayed => {
                 std::thread::sleep(Duration::from_millis(1));

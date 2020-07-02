@@ -1,8 +1,8 @@
-use std::ffi::c_void;
+use std::ffi::{c_void, CString};
 
 use crate::{
-    core::{Cores, Mthread, Reactors},
-    ffihelper::AsStr,
+    core::{Cores, Mthread, Reactor, Reactors},
+    ffihelper::{AsStr, FfiResult},
     subsys::{
         nvmf::{
             poll_groups::PollGroup,
@@ -15,6 +15,7 @@ use crate::{
         Config,
     },
 };
+use nix::errno::Errno;
 use rand::seq::SliceRandom;
 use spdk_sys::{
     spdk_env_get_core_count,
@@ -25,6 +26,7 @@ use spdk_sys::{
     spdk_nvmf_qpair,
     spdk_nvmf_qpair_disconnect,
     spdk_nvmf_subsystem_create,
+    spdk_nvmf_subsystem_set_mn,
     spdk_nvmf_target_opts,
     spdk_nvmf_tgt,
     spdk_nvmf_tgt_accept,
@@ -261,7 +263,7 @@ impl Target {
     }
 
     // this will be removed in future releases as this is going to be pushed
-    // down into libnvmf
+    // down into libnvmf, to avoid to much churn here simply use cb styles
     extern "C" fn new_qpair(qp: *mut spdk_nvmf_qpair, _: *mut c_void) {
         extern "C" fn qp_add_to_pg(pg: *mut c_void) {
             let ctx: Box<(*mut spdk_nvmf_poll_group, *mut spdk_nvmf_qpair)> =
@@ -359,7 +361,22 @@ impl Target {
             ))
         };
 
+        let mn = CString::new("Mayastor NVMe controller").unwrap();
+        unsafe {
+            spdk_nvmf_subsystem_set_mn(discovery.0.as_ptr(), mn.as_ptr())
+        }
+        .to_result(|e| Error::Subsystem {
+            source: Errno::from_i32(e),
+            nqn: "discovery".into(),
+            msg: "failed to set serial".into(),
+        })
+        .unwrap();
+
         discovery.allow_any(true);
+
+        Reactor::block_on(async {
+            let _ = discovery.start().await.unwrap();
+        });
     }
 
     /// stop all subsystems on this target we are borrowed here

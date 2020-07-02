@@ -75,11 +75,7 @@ impl Iterator for NvmfSubsystemIterator {
         } else {
             let current = self.0;
             self.0 = unsafe { spdk_nvmf_subsystem_get_next(current) };
-            if !self.0.is_null() {
-                Some(NvmfSubsystem(NonNull::new(self.0).unwrap()))
-            } else {
-                None
-            }
+            Some(NvmfSubsystem(NonNull::new(current).unwrap()))
         }
     }
 }
@@ -446,7 +442,7 @@ impl NvmfSubsystem {
     /// stopped state
     pub fn destroy_all() {
         Reactors::master().send_future(async {
-            NvmfSubsystem::first().iter().for_each(|s| s.destroy());
+            // NvmfSubsystem::first().iter().for_each(|s| s.destroy());
             NVMF_TGT.with(|t| {
                 let mut tgt = t.borrow_mut();
                 tgt.next_state()
