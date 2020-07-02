@@ -136,14 +136,12 @@ impl Display for TransportID {
 
 impl Debug for TransportID {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} {} {} {}",
-            self.0.trtype,
-            self.0.trstring.as_str(),
-            self.0.traddr.as_str(),
-            self.0.trsvcid.as_str()
-        )
+        f.debug_struct("Transport ID")
+            .field("trtype", &self.0.trtype)
+            .field("trstring", &self.0.trstring.as_str().to_string())
+            .field("traddr", &self.0.traddr.as_str().to_string())
+            .field("trsvcid", &self.0.trsvcid.as_str().to_string())
+            .finish()
     }
 }
 pub(crate) fn get_ipv4_address() -> Result<String, Error> {

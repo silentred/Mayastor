@@ -64,7 +64,7 @@ pub enum Error {
     #[snafu(display("Failed to create share for  {} {}", bdev, msg))]
     Share { bdev: Bdev, msg: String },
     #[snafu(display("Failed to add namespace for  {} {}", bdev, msg))]
-    Namespace { bdev: Bdev, msg: String },
+    Namespace { bdev: String, msg: String },
 }
 
 thread_local! {
@@ -77,15 +77,14 @@ impl Nvmf {
     extern "C" fn init() {
         debug!("mayastor nvmf subsystem init");
 
-        // this code only ever gets run on the fist core so we dont
-        // end up running this on other cores.
+        // this code only ever gets run on the fist core
 
         if Config::get().nexus_opts.nvmf_enable {
             NVMF_TGT.with(|tgt| {
                 tgt.borrow_mut().next_state();
             });
         } else {
-            debug!("nvmf targe disabled");
+            debug!("nvmf target disabled");
             unsafe { spdk_subsystem_init_next(0) }
         }
     }

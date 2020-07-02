@@ -9,11 +9,10 @@ use snafu::Snafu;
 use crate::{
     bdev::VerboseError,
     core::{BdevHandle, CoreError, Descriptor, DmaError},
-    nexus_uri::BdevCreateDestroy,
+    nexus_uri::NexusBdevError,
 };
 
 use super::rebuild_impl::*;
-use crate::{bdev::VerboseError, nexus_uri::NexusBdevError};
 
 #[derive(Debug, Snafu, Clone)]
 #[snafu(visibility = "pub(crate)")]

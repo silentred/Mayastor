@@ -727,14 +727,17 @@ pub async fn share(uuid: &str, bdev: &Bdev) -> Result<()> {
 /// Un-export given bdev from nvmf target.
 /// Unsharing replica which is not shared is not an error.
 pub async fn unshare(uuid: &str) -> Result<()> {
-    let n = NvmfSubsystem::nqn_lookup(uuid).unwrap();
-    n.stop().await.unwrap();
-    n.destroy();
+    if let Some(ss) = NvmfSubsystem::nqn_lookup(uuid) {
+        ss.stop().await.unwrap();
+        ss.destroy();
+    }
     Ok(())
 }
 
 pub fn get_uri(uuid: &str) -> Option<String> {
     if let Some(ss) = NvmfSubsystem::nqn_lookup(uuid) {
+        // for now we only pop the first but we can share a bdev
+        // over multiple nqn's
         ss.uri_endpoints().unwrap().pop()
     } else {
         None

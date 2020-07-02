@@ -1,5 +1,6 @@
 use std::{
     ffi::{c_void, CString},
+    fmt,
     fmt::Debug,
     mem::size_of,
     ptr,
@@ -15,6 +16,16 @@ pub enum SubType {
     Nvme,
     Discovery,
 }
+
+impl Display for SubType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match *self {
+            SubType::Nvme => write!(f, "NVMe"),
+            SubType::Discovery => write!(f, "Discovery"),
+        }
+    }
+}
+
 use crate::{
     core::{Bdev, Reactors},
     ffihelper::{cb_arg, AsStr, FfiResult, IntoCString},
@@ -50,6 +61,7 @@ use spdk_sys::{
     SPDK_NVMF_SUBTYPE_DISCOVERY,
     SPDK_NVMF_SUBTYPE_NVME,
 };
+use std::fmt::Display;
 use tracing::instrument;
 
 pub struct NvmfSubsystem(pub(crate) NonNull<spdk_nvmf_subsystem>);
@@ -87,10 +99,17 @@ impl IntoIterator for NvmfSubsystem {
 
 impl Debug for NvmfSubsystem {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        if let Some(e) = self.uri_endpoints() {
-            write!(f, "{:?}", e).unwrap();
+        unsafe {
+            f.debug_struct("NvmfSubsystem")
+                .field("id", &self.0.as_ref().id)
+                .field("subtype", &self.subtype().to_string())
+                .field("subnqn", &self.0.as_ref().subnqn.as_str().to_string())
+                .field("sn", &self.0.as_ref().sn.as_str().to_string())
+                .field("mn", &self.0.as_ref().mn.as_str().to_string())
+                .field("allow_any_host", &self.0.as_ref().allow_any_host)
+                .field("listeners", &self.listeners_to_vec())
+                .finish()
         }
-        Ok(())
     }
 }
 
@@ -182,7 +201,7 @@ impl NvmfSubsystem {
 
         if ns_id < 1 {
             Err(Error::Namespace {
-                bdev: bdev.clone(),
+                bdev: bdev.name(),
                 msg: "failed to add namespace ID".to_string(),
             })
         } else {
@@ -243,7 +262,8 @@ impl NvmfSubsystem {
     }
 
     /// start the subsystem previously created -- note that we destroy it on
-    /// failure
+    /// failure to ensure the state is not in limbo and to avoid leaking
+    /// resources
     pub async fn start(self) -> Result<(), Error> {
         extern "C" fn start_cb(
             ss: *mut spdk_nvmf_subsystem,
@@ -284,7 +304,10 @@ impl NvmfSubsystem {
             source: Errno::from_i32(e),
             nqn: self.get_nqn(),
             msg: "failed to start the subsystem".to_string(),
-        })
+        })?;
+
+        info!("started {:?}", self.get_nqn());
+        Ok(())
     }
 
     /// stop the subsystem
@@ -518,7 +541,7 @@ impl NvmfSubsystem {
         unsafe {
             match self.0.as_ref().subtype {
                 SPDK_NVMF_SUBTYPE_DISCOVERY => SubType::Discovery,
-                SPDK_NVMF_SUBTYPE_NVME => SubType::Discovery,
+                SPDK_NVMF_SUBTYPE_NVME => SubType::Nvme,
                 _ => panic!("unknown NVMe subtype"),
             }
         }
