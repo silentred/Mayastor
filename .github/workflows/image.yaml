@@ -18,6 +18,7 @@ jobs:
           name: mayastor
           skipNixBuild: true
       - run: nix-build -A node-moacImage -o /tmp/node-moacImage
+      - run: nix-build nix/tests/basic-mayastor.nix
       - uses: actions/upload-artifact@v2
         with:
           name: mayastor-moac-image
